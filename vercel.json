@@ -1,11 +1,13 @@
 {
   "builds": [
     { "src": "api/history.py", "use": "@vercel/python" },
+    { "src": "api/presets.py", "use": "@vercel/python" },
     { "src": "index.html", "use": "@vercel/static" },
     { "src": "manifest.json", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/api/history", "dest": "api/history.py" },
+    { "src": "/api/presets", "dest": "api/presets.py" },
     { "src": "/manifest.json", "dest": "manifest.json" },
     { "src": "/(.*)", "dest": "index.html" }
   ]

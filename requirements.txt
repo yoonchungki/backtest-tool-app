@@ -1,1 +1,2 @@
 requests
+vercel_blob
