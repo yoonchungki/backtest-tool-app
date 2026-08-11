@@ -7,6 +7,10 @@ Vercel 서버리스 함수: 백테스트 도구용 과거 시세 조회 (/api/hi
 긴 기간(예: 신규 종목 전체 히스토리)은 이 함수를 여러 번 나눠서 호출하는 방식으로 처리함
 (프론트에서 ~90일 단위로 쪼개서 반복 호출 + 진행상황 표시) — 서버 쪽에서 한 번에 몇 년치를
 다 처리하려고 하면 Vercel 함수 실행시간 제한에 걸릴 수 있어서 일부러 이렇게 나눔.
+
+`?marketcap=1`을 붙이면(start/end 없이 stock만) 과거 시세 대신 "지금 이 순간" 기준 시가총액(hts_avls)만
+조회해서 돌려줌 - 별도 파일로 안 만들고 이 파일에 합친 이유는 토큰 캐시(_token_cache)를 공유해서,
+"전체 종목 최신화" 한 번 누를 때 종목마다 반복 호출돼도 KIS 토큰 재발급 제한에 안 걸리게 하려는 것.
 """
 import json
 import os
@@ -46,6 +50,27 @@ def get_access_token(cfg):
     expires_in = int(data.get("expires_in", 86400))
     _token_cache[cfg["app_key"]] = {"access_token": token, "expire_at": time.time() + expires_in}
     return token
+
+
+def get_market_cap(cfg, token, stock_code):
+    """"주식현재가 시세"(inquire-price)를 호출해서 hts_avls(시가총액, 억원 단위)만 뽑아옴.
+       inquire-daily-itemchartprice와는 다른 엔드포인트라 이 함수만 따로 있음 - 과거 시점 값은 못 주고
+       "지금 이 순간" 기준 시가총액만 알 수 있음(그래서 "전체 종목 최신화" 누를 때마다 다시 조회함)."""
+    url = cfg["base_url"] + "/uapi/domestic-stock/v1/quotations/inquire-price"
+    headers = {
+        "authorization": f"Bearer {token}", "appkey": cfg["app_key"], "appsecret": cfg["app_secret"],
+        "tr_id": "FHKST01010100", "custtype": "P",
+    }
+    params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": stock_code}
+    resp = requests.get(url, headers=headers, params=params, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("rt_cd") != "0":
+        raise RuntimeError(data.get("msg1") or "시가총액 조회에 실패했습니다")
+    raw = (data.get("output") or {}).get("hts_avls")
+    if raw is None:
+        raise RuntimeError("시가총액 정보가 없습니다")
+    return float(raw)  # 억원 단위
 
 
 def get_daily_price_chunk(cfg, token, stock_code, start_ymd, end_ymd):
@@ -101,9 +126,20 @@ class handler(BaseHTTPRequestHandler):
         try:
             qs = parse_qs(urlparse(self.path).query)
             stock = (qs.get("stock", [None])[0] or "").strip()
+            if not stock:
+                self._send_json(400, {"error": "stock 파라미터가 필요합니다"})
+                return
+
+            if (qs.get("marketcap", [None])[0] or "") == "1":
+                cfg = load_config()
+                token = get_access_token(cfg)
+                market_cap_eok = get_market_cap(cfg, token, stock)
+                self._send_json(200, {"stock": stock, "marketCapEok": market_cap_eok})
+                return
+
             start = (qs.get("start", [None])[0] or "").strip()
             end = (qs.get("end", [None])[0] or "").strip()
-            if not stock or not start or not end:
+            if not start or not end:
                 self._send_json(400, {"error": "stock/start/end 파라미터가 필요합니다 (YYYYMMDD)"})
                 return
 
