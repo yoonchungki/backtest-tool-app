@@ -57,7 +57,9 @@ class handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length else b"{}"
             data = json.loads(raw or b"{}")
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-            vercel_blob.put(BLOB_PATHNAME, body, {"addRandomSuffix": "false", "contentType": "application/json"})
+            vercel_blob.put(BLOB_PATHNAME, body, {
+                "addRandomSuffix": "false", "allowOverwrite": "true", "contentType": "application/json",
+            })
             self._send_json(200, {"ok": True})
         except Exception as e:
             self._send_json(500, {"error": str(e)})
