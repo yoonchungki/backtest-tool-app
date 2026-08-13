@@ -22,6 +22,20 @@ from urllib.parse import urlparse, parse_qs
 import requests
 
 
+def _get_with_retry(url, headers=None, params=None, timeout=15, retries=2):
+    """KIS 쪽에서 가끔 연결이 응답 없이 끊기는 경우(RemoteDisconnected 등)가 있어서 몇 번 재시도함 -
+       "새 종목 추가"처럼 수십 번 연속 호출하는 흐름에서 그 중 하나만 실패해도 전체가 중단되는 걸 막기 위함."""
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            return requests.get(url, headers=headers, params=params, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(0.5 * (attempt + 1))
+    raise last_err
+
+
 def load_config():
     is_paper = os.environ.get("KIS_MODE", "paper") == "paper"
     return {
@@ -62,7 +76,7 @@ def get_market_cap(cfg, token, stock_code):
         "tr_id": "FHKST01010100", "custtype": "P",
     }
     params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": stock_code}
-    resp = requests.get(url, headers=headers, params=params, timeout=15)
+    resp = _get_with_retry(url, headers=headers, params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     if data.get("rt_cd") != "0":
@@ -85,7 +99,7 @@ def get_daily_price_chunk(cfg, token, stock_code, start_ymd, end_ymd):
         "FID_INPUT_DATE_1": start_ymd, "FID_INPUT_DATE_2": end_ymd,
         "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0",
     }
-    resp = requests.get(url, headers=headers, params=params, timeout=15)
+    resp = _get_with_retry(url, headers=headers, params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     if data.get("rt_cd") != "0":
