@@ -87,6 +87,26 @@ def get_market_cap(cfg, token, stock_code):
     return float(raw)  # 억원 단위
 
 
+def get_market_cap_batch(cfg, token, codes, time_budget_sec=8.5):
+    """여러 종목의 시가총액을 한 함수 호출(=토큰 1번만 발급) 안에서 순회 조회함.
+       "전체 종목 최신화"가 종목마다 별도 HTTP 요청을 보내면, 요청마다 별개의 서버리스 인스턴스로
+       라우팅될 수 있어 in-memory _token_cache가 공유 안 되고 종목마다 새 토큰을 발급받으려다
+       KIS의 "1분에 1회" 토큰 재발급 제한에 걸리는 문제가 있었음 - 그래서 여러 종목을 한 번의
+       서버 함수 실행 안에서 처리해 토큰 발급 횟수 자체를 요청당 1번으로 묶음.
+       Vercel 함수 실행시간 제한(기본 10초)에 걸리지 않도록 time_budget_sec을 넘기면 남은 종목은
+       처리하지 않고 remaining으로 돌려줌 - 프론트가 remaining만 다시 요청해서 이어감."""
+    results, errors = {}, {}
+    start = time.time()
+    for i, code in enumerate(codes):
+        if time.time() - start > time_budget_sec:
+            return results, errors, codes[i:]
+        try:
+            results[code] = get_market_cap(cfg, token, code)
+        except Exception as e:
+            errors[code] = str(e)
+    return results, errors, []
+
+
 def get_daily_price_chunk(cfg, token, stock_code, start_ymd, end_ymd):
     """한 번에 최대 ~95일치까지만 안전함(KIS 제한) — 그 이상은 호출한 쪽(프론트)에서 나눠서 반복 호출."""
     url = cfg["base_url"] + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
@@ -139,6 +159,16 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             qs = parse_qs(urlparse(self.path).query)
+
+            batch_codes_raw = (qs.get("marketcap_batch", [None])[0] or "").strip()
+            if batch_codes_raw:
+                codes = [c.strip() for c in batch_codes_raw.split(",") if c.strip()]
+                cfg = load_config()
+                token = get_access_token(cfg)
+                results, errors, remaining = get_market_cap_batch(cfg, token, codes)
+                self._send_json(200, {"results": results, "errors": errors, "remaining": remaining})
+                return
+
             stock = (qs.get("stock", [None])[0] or "").strip()
             if not stock:
                 self._send_json(400, {"error": "stock 파라미터가 필요합니다"})
