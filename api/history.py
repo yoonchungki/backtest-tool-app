@@ -117,7 +117,9 @@ def get_daily_price_chunk(cfg, token, stock_code, start_ymd, end_ymd):
     params = {
         "FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": stock_code,
         "FID_INPUT_DATE_1": start_ymd, "FID_INPUT_DATE_2": end_ymd,
-        "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0",
+        # "1" = 원주가(미수정주가). 액면분할 등으로 보유수량을 자동 조정하는 로직이 이 앱에 없어서,
+        # 분할이 거의 없는 이 앱의 ETF 위주 유니버스에서는 미수정주가가 실제 체결가에 더 가까움(2026-08-16 결정).
+        "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "1",
     }
     resp = _get_with_retry(url, headers=headers, params=params, timeout=15)
     resp.raise_for_status()
