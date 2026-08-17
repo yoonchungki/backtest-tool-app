@@ -183,54 +183,6 @@ class handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"stock": stock, "marketCapEok": market_cap_eok})
                 return
 
-            # 임시 디버그용: 수정주가(0) vs 미수정주가(1)를 같은 기간으로 둘 다 조회해서 비교
-            # (배당/분배가 수정주가에 반영되는지 확인하려고 추가 - 확인 끝나면 제거할 것)
-            if (qs.get("compareadj", [None])[0] or "") == "1":
-                cfg = load_config()
-                token = get_access_token(cfg)
-                cmp_start = (qs.get("start", [None])[0] or "").strip()
-                cmp_end = (qs.get("end", [None])[0] or "").strip()
-                if not cmp_start or not cmp_end:
-                    self._send_json(400, {"error": "start/end 파라미터가 필요합니다"})
-                    return
-
-                def fetch_series(adj_flag):
-                    url = cfg["base_url"] + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-                    headers = {
-                        "authorization": f"Bearer {token}", "appkey": cfg["app_key"], "appsecret": cfg["app_secret"],
-                        "tr_id": "FHKST03010100", "custtype": "P",
-                    }
-                    params = {
-                        "FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": stock,
-                        "FID_INPUT_DATE_1": cmp_start, "FID_INPUT_DATE_2": cmp_end,
-                        "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": adj_flag,
-                    }
-                    resp = _get_with_retry(url, headers=headers, params=params, timeout=15)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    out = {}
-                    for r in data.get("output2", []) or []:
-                        try:
-                            out[r["stck_bsop_date"]] = float(r["stck_clpr"])
-                        except (KeyError, ValueError):
-                            continue
-                    return out
-
-                adj0 = fetch_series("0")  # 수정주가
-                adj1 = fetch_series("1")  # 미수정주가
-                all_dates = sorted(set(adj0.keys()) | set(adj1.keys()))
-                diffs = []
-                for d in all_dates:
-                    c0, c1 = adj0.get(d), adj1.get(d)
-                    if c0 is not None and c1 is not None and c0 != c1:
-                        diffs.append({"date": d, "adj0_수정주가": c0, "adj1_미수정주가": c1, "diff": round(c0 - c1, 2)})
-                self._send_json(200, {
-                    "stock": stock, "totalDays": len(all_dates), "diffCount": len(diffs),
-                    "firstDiff": diffs[0] if diffs else None, "lastDiff": diffs[-1] if diffs else None,
-                    "diffs": diffs,
-                })
-                return
-
             start = (qs.get("start", [None])[0] or "").strip()
             end = (qs.get("end", [None])[0] or "").strip()
             if not start or not end:
