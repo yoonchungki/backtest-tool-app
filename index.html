@@ -3389,7 +3389,12 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
   }
 
   for(let t=0; t<n; t++){
-    // 1단계: 보유 중인 종목의 매도 신호 처리 - 매도대금은 공용 현금으로 합쳐짐
+    // 실전에서는 매수/매도를 전날 밤에 예약주문으로 미리 걸어두므로, 매수 배정예산은
+    // "오늘 매도로 들어올 돈"이 아직 반영 안 된 전날 마감 시점의 현금 기준이어야 함
+    // (당일 매도 대금은 그날 저녁에야 정산되어 다음날 주문부터 쓸 수 있음).
+    const cashBeforeToday = cash;
+
+    // 1단계: 보유 중인 종목의 매도 신호 처리 - 매도대금은 공용 현금으로 합쳐짐(다음날 배정예산부터 반영)
     const soldToday = new Set(); // 오늘 매도한 종목은 같은 날 바로 재매수하지 않음(하루 한 종목당 매수/매도 중 1건만)
     for(let e=0; e<N; e++){
       const s = state[e];
@@ -3414,7 +3419,7 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
       }
     }
 
-    // 2단계: 오늘 매수 대기 중(미보유, 오늘 방금 매도한 종목은 제외)인 종목 수로 공용 현금을
+    // 2단계: 오늘 매수 대기 중(미보유, 오늘 방금 매도한 종목은 제외)인 종목 수로 전날 마감 현금(cashBeforeToday)을
     // 균등하게 나눠 배정예산을 정하고, 그 예산 안에서 매수 신호가 난 종목만 살 수 있는 최대 수량을 매수함.
     const buyCandidates = [];
     for(let e=0; e<N; e++){
@@ -3424,7 +3429,7 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
       if(!p || p.idx < 1) continue;
       buyCandidates.push(e);
     }
-    const perBudget = buyCandidates.length > 0 ? cash / buyCandidates.length : 0;
+    const perBudget = buyCandidates.length > 0 ? cashBeforeToday / buyCandidates.length : 0;
     if(perBudget > 0){
       buyCandidates.forEach(e=>{
         const s = state[e];
