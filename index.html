@@ -213,7 +213,7 @@ canvas{max-width:100%;}
       </div>
       <div class="btnRow" style="margin-top:8px; flex-wrap:wrap;">
         <label style="display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text); cursor:pointer;">
-          <input type="checkbox" id="lwSlippageOn"> 슬리피지 적용
+          <input type="checkbox" id="lwSlippageOn"> 목표가 추가수정(x)
         </label>
         <div class="rangeCtrl" style="width:100px;"><label>단위</label>
           <select id="lwSlippageMode" style="width:100%; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:8px 10px; border-radius:6px; font-family:var(--mono); font-size:13.5px;">
@@ -221,8 +221,13 @@ canvas{max-width:100%;}
             <option value="pct">%</option>
           </select>
         </div>
-        <div class="rangeCtrl" style="width:150px;"><label id="lwSlipBuyLabel">매수 슬리피지(틱)</label><input type="number" id="lwSlipBuyTicks" value="0" step="1" min="0"></div>
-        <div class="rangeCtrl" style="width:150px;"><label id="lwSlipSellLabel">매도 슬리피지(틱)</label><input type="number" id="lwSlipSellTicks" value="0" step="1" min="0"></div>
+      </div>
+      <div class="rangeGrid" style="margin-top:6px;">
+        <div class="rangeCtrl"><label id="lwSlipBuyMinLabel">x매수 최소(틱)</label><input type="number" id="lwSlipBuyMin" value="0" step="1"></div>
+        <div class="rangeCtrl"><label id="lwSlipBuyMaxLabel">x매수 최대(틱)</label><input type="number" id="lwSlipBuyMax" value="0" step="1"></div>
+        <div class="rangeCtrl"><label id="lwSlipSellMinLabel">x매도 최소(틱)</label><input type="number" id="lwSlipSellMin" value="0" step="1"></div>
+        <div class="rangeCtrl"><label id="lwSlipSellMaxLabel">x매도 최대(틱)</label><input type="number" id="lwSlipSellMax" value="0" step="1"></div>
+        <div class="rangeCtrl"><label>x 간격(step)</label><input type="number" id="lwSlipStep" value="1" step="1"></div>
       </div>
       <div class="btnRow" style="margin-top:8px; flex-wrap:wrap; gap:14px;">
         <div class="rangeCtrl" style="width:110px;"><label>RSI 기간(일)</label><input type="number" id="lwRsiPeriod" value="14" step="1" min="2"></div>
@@ -768,7 +773,9 @@ function collectSettings(){
     lwStep: val('lwStep'), lwFee: val('lwFee'),
     lwSlippageOn: checked('lwSlippageOn'),
     lwSlippageMode: val('lwSlippageMode'),
-    lwSlipBuyTicks: val('lwSlipBuyTicks'), lwSlipSellTicks: val('lwSlipSellTicks'),
+    lwSlipBuyMin: val('lwSlipBuyMin'), lwSlipBuyMax: val('lwSlipBuyMax'),
+    lwSlipSellMin: val('lwSlipSellMin'), lwSlipSellMax: val('lwSlipSellMax'),
+    lwSlipStep: val('lwSlipStep'),
     lwLogScale: checked('lwLogScale'),
     lwShowMdd: checked('lwShowMdd'),
     lwChartMaPeriod: val('lwChartMaPeriod'),
@@ -799,7 +806,9 @@ function loadSettings(){
     setVal('lwStep', s.lwStep); setVal('lwFee', s.lwFee);
     setChecked('lwSlippageOn', s.lwSlippageOn);
     setVal('lwSlippageMode', s.lwSlippageMode);
-    setVal('lwSlipBuyTicks', s.lwSlipBuyTicks); setVal('lwSlipSellTicks', s.lwSlipSellTicks);
+    setVal('lwSlipBuyMin', s.lwSlipBuyMin); setVal('lwSlipBuyMax', s.lwSlipBuyMax);
+    setVal('lwSlipSellMin', s.lwSlipSellMin); setVal('lwSlipSellMax', s.lwSlipSellMax);
+    setVal('lwSlipStep', s.lwSlipStep);
     setChecked('lwLogScale', s.lwLogScale);
     setChecked('lwShowMdd', s.lwShowMdd);
     setVal('lwChartMaPeriod', s.lwChartMaPeriod);
@@ -2230,8 +2239,11 @@ async function runLw(){
   const feePct = parseFloat(document.getElementById('lwFee').value)||0;
   const slippageOn = document.getElementById('lwSlippageOn').checked;
   const slipMode = document.getElementById('lwSlippageMode').value;
-  const slipBuyTicks = parseFloat(document.getElementById('lwSlipBuyTicks').value)||0;
-  const slipSellTicks = parseFloat(document.getElementById('lwSlipSellTicks').value)||0;
+  const slipStep = parseFloat(document.getElementById('lwSlipStep').value) || 1;
+  const slipBuyMin = parseFloat(document.getElementById('lwSlipBuyMin').value)||0;
+  const slipBuyMax = parseFloat(document.getElementById('lwSlipBuyMax').value)||0;
+  const slipSellMin = parseFloat(document.getElementById('lwSlipSellMin').value)||0;
+  const slipSellMax = parseFloat(document.getElementById('lwSlipSellMax').value)||0;
   const prevCloseOn = document.getElementById('lwPrevCloseOn').checked;
   const maFilterOn = document.getElementById('lwMaFilterOn').checked;
   const maPeriod = parseInt(document.getElementById('lwMaPeriod').value)||20;
@@ -2255,14 +2267,22 @@ async function runLw(){
   const sells = range(parseFloat(document.getElementById('lwSellMin').value), parseFloat(document.getElementById('lwSellMax').value), stepV);
   const buysBelow = maFilterOn ? range(bBelowMin, bBelowMax, stepV) : [0];
   const sellsBelow = maFilterOn ? range(sBelowMin, sBelowMax, stepV) : [0];
+  const slipBuys = slippageOn ? range(slipBuyMin, slipBuyMax, slipStep) : [0];
+  const slipSells = slippageOn ? range(slipSellMin, slipSellMax, slipStep) : [0];
 
   let combos = [];
-  for(const b of buys) for(const s of sells) for(const bB of buysBelow) for(const sB of sellsBelow) combos.push({b, s, bB, sB});
+  for(const b of buys) for(const s of sells) for(const bB of buysBelow) for(const sB of sellsBelow)
+    for(const bx of slipBuys) for(const sx of slipSells)
+      combos.push({b, s, bB, sB, bx, sx});
 
   const noteParts = [`k매수 ${buys.length}가지`, `k매도 ${sells.length}가지`];
   if(maFilterOn){
     noteParts.push(`하락장매수k ${buysBelow.length}가지`);
     noteParts.push(`하락장매도k ${sellsBelow.length}가지`);
+  }
+  if(slippageOn){
+    noteParts.push(`x매수 ${slipBuys.length}가지`);
+    noteParts.push(`x매도 ${slipSells.length}가지`);
   }
   if(combos.length > MAX_COMBOS){
     noteEl.textContent = `조합이 ${combos.length}개로 너무 많아 앞의 ${MAX_COMBOS.toLocaleString()}개만 계산합니다. 범위를 좁혀보세요.`;
@@ -2292,9 +2312,9 @@ async function runLw(){
     for(let j=i; j<end; j++){
       const c = combos[j];
       results[j] = {
-        label: `k매수 ${c.b} / k매도 ${c.s}` + (maFilterOn ? ` (MA${maPeriod}↓ 매수${c.bB}/매도${c.sB})` : '') + rsiLabelPart,
+        label: `k매수 ${c.b} / k매도 ${c.s}` + (maFilterOn ? ` (MA${maPeriod}↓ 매수${c.bB}/매도${c.sB})` : '') + (slippageOn ? ` [x매수${c.bx}/x매도${c.sx}]` : '') + rsiLabelPart,
         color: colors[j],
-        ...larryWilliams(c.b, c.s, feePct, slippageOn, slipMode, slipBuyTicks, slipSellTicks, maFilterOn, isAboveArr, c.bB, c.sB, rsiOpts, prevCloseOn)
+        ...larryWilliams(c.b, c.s, feePct, slippageOn, slipMode, c.bx, c.sx, maFilterOn, isAboveArr, c.bB, c.sB, rsiOpts, prevCloseOn)
       };
     }
     if(combos.length > CHUNK_SIZE){
@@ -2320,8 +2340,10 @@ function renderResultsLw(){ renderResults('lwResults', lastLwResults, lastLwSort
 function updateSlippageLabels(){
   const mode = document.getElementById('lwSlippageMode').value;
   const unitLabel = mode === 'pct' ? '%' : '틱';
-  document.getElementById('lwSlipBuyLabel').textContent = `매수 슬리피지(${unitLabel})`;
-  document.getElementById('lwSlipSellLabel').textContent = `매도 슬리피지(${unitLabel})`;
+  document.getElementById('lwSlipBuyMinLabel').textContent = `x매수 최소(${unitLabel})`;
+  document.getElementById('lwSlipBuyMaxLabel').textContent = `x매수 최대(${unitLabel})`;
+  document.getElementById('lwSlipSellMinLabel').textContent = `x매도 최소(${unitLabel})`;
+  document.getElementById('lwSlipSellMaxLabel').textContent = `x매도 최대(${unitLabel})`;
 }
 
 function updatePrevCloseLabels(){
@@ -2339,8 +2361,11 @@ document.getElementById('lwInitCap').addEventListener('input', ()=>{
 updateSlippageLabels();
 document.getElementById('lwSlippageOn').addEventListener('change', runLw);
 document.getElementById('lwSlippageMode').addEventListener('change', ()=>{ updateSlippageLabels(); runLw(); });
-document.getElementById('lwSlipBuyTicks').addEventListener('input', runLw);
-document.getElementById('lwSlipSellTicks').addEventListener('input', runLw);
+document.getElementById('lwSlipBuyMin').addEventListener('input', runLw);
+document.getElementById('lwSlipBuyMax').addEventListener('input', runLw);
+document.getElementById('lwSlipSellMin').addEventListener('input', runLw);
+document.getElementById('lwSlipSellMax').addEventListener('input', runLw);
+document.getElementById('lwSlipStep').addEventListener('input', runLw);
 document.getElementById('lwMaFilterOn').addEventListener('change', runLw);
 document.getElementById('lwMaPeriod').addEventListener('input', runLw);
 document.getElementById('lwBuyBelowMin').addEventListener('input', runLw);
