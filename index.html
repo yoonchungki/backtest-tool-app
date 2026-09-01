@@ -3301,14 +3301,15 @@ function renderMvStockParamsTable(){
   if(datasets.length === 0){ el.innerHTML = ''; return; }
   const maOn = document.getElementById('mvMaFilterOn').checked;
   datasets.forEach(ds => {
-    if(!mvStockParams[ds.mvKey]) mvStockParams[ds.mvKey] = { kBuy: 0.5, kSell: 0.5, kBuyBelow: 0.5, kSellBelow: 0.5 };
+    if(!mvStockParams[ds.mvKey]) mvStockParams[ds.mvKey] = { kBuy: 0.5, kSell: 0.5, kBuyBelow: 0.5, kSellBelow: 0.5, slipPct: 0 };
     if(mvStockParams[ds.mvKey].kBuyBelow === undefined){ mvStockParams[ds.mvKey].kBuyBelow = mvStockParams[ds.mvKey].kBuy; mvStockParams[ds.mvKey].kSellBelow = mvStockParams[ds.mvKey].kSell; }
+    if(mvStockParams[ds.mvKey].slipPct === undefined) mvStockParams[ds.mvKey].slipPct = 0;
   });
 
   const belowCols = maOn ? `<th>하락장 매수k</th><th>하락장 매도k</th>` : '';
   el.innerHTML = `
     <table class="resultTable">
-      <thead><tr><th>종목</th><th>k매수${maOn ? '(이평위)' : ''}</th><th>k매도${maOn ? '(이평위)' : ''}</th>${belowCols}</tr></thead>
+      <thead><tr><th>종목</th><th>k매수${maOn ? '(이평위)' : ''}</th><th>k매도${maOn ? '(이평위)' : ''}</th>${belowCols}<th>슬리피지(%)</th></tr></thead>
       <tbody>
         ${datasets.map(ds => {
           const p = mvStockParams[ds.mvKey];
@@ -3324,18 +3325,19 @@ function renderMvStockParamsTable(){
             <td><input type="number" class="mvKBuy" data-key="${key}" value="${p.kBuy}" step="0.05" style="${inputStyle}"></td>
             <td><input type="number" class="mvKSell" data-key="${key}" value="${p.kSell}" step="0.05" style="${inputStyle}"></td>
             ${belowInputs}
+            <td><input type="number" class="mvSlipPct" data-key="${key}" value="${p.slipPct}" step="0.01" min="0" style="${inputStyle}"></td>
           </tr>
           `;
         }).join('')}
       </tbody>
     </table>
-    <div style="font-size:12px; color:var(--text-dim); margin-top:6px;">${maOn ? '이평 위/아래 판단 불가 구간(초기)은 그 종목만 그날 거래하지 않습니다.' : ''}</div>
+    <div style="font-size:12px; color:var(--text-dim); margin-top:6px;">${maOn ? '이평 위/아래 판단 불가 구간(초기)은 그 종목만 그날 거래하지 않습니다. ' : ''}슬리피지(%)는 목표가 자체는 그대로 두고, 체결 시 수수료처럼 종목별로 추가로 깎이는 비용입니다(매수는 더 내고 매도는 덜 받음).</div>
   `;
-  el.querySelectorAll('.mvKBuy, .mvKSell, .mvKBuyBelow, .mvKSellBelow').forEach(inp => {
+  el.querySelectorAll('.mvKBuy, .mvKSell, .mvKBuyBelow, .mvKSellBelow, .mvSlipPct').forEach(inp => {
     inp.addEventListener('input', () => {
       const key = inp.dataset.key;
       const field = inp.classList.contains('mvKBuy') ? 'kBuy' : inp.classList.contains('mvKSell') ? 'kSell'
-        : inp.classList.contains('mvKBuyBelow') ? 'kBuyBelow' : 'kSellBelow';
+        : inp.classList.contains('mvKBuyBelow') ? 'kBuyBelow' : inp.classList.contains('mvKSellBelow') ? 'kSellBelow' : 'slipPct';
       if(!mvStockParams[key]) return;
       mvStockParams[key][field] = parseFloat(inp.value) || 0;
     });
@@ -3432,10 +3434,11 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
       const pm = params[ds.mvKey];
       const rg = regimeK(e, p, pm.kBuy, pm.kSell, pm.kBuyBelow, pm.kSellBelow);
       if(!rg.ok) continue;
+      const stockRate = fee + (pm.slipPct||0)/100; // 목표가는 안 건드리고, 체결 시 수수료처럼 종목별로 추가로 빠지는 비용
 
       const target = computeSellPrice(base, prevRange, rg.kSell);
       if(target >= p.low && target <= p.high){
-        const proceeds = s.units*target*(1-fee);
+        const proceeds = s.units*target*(1-stockRate);
         s.tradeList.push({ ret: proceeds/s.entryCost - 1, idx: t, entryDate: s.entryDate, entryPrice: s.entryPrice, exitDate: masterDates[t], exitPrice: target, entryCost: s.entryCost, proceeds });
         tradeLog.push({ date: masterDates[t], name: ds.stockName||ds.fileName, side:'매도', price: target, qty: s.units, amount: proceeds, budget: null });
         cash += proceeds;
@@ -3465,14 +3468,15 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
         const pm = params[ds.mvKey];
         const rg = regimeK(e, p, pm.kBuy, pm.kSell, pm.kBuyBelow, pm.kSellBelow);
         if(!rg.ok) return;
+        const stockRate = fee + (pm.slipPct||0)/100; // 목표가는 안 건드리고, 체결 시 수수료처럼 종목별로 추가로 더 내는 비용
 
         const target = computeBuyPrice(base, prevRange, rg.kBuy);
         if(target < p.low || target > p.high) return;
 
-        const affordable = Math.floor((perBudget*(1-fee)) / target);
+        const affordable = Math.floor((perBudget*(1-stockRate)) / target);
         if(affordable <= 0) return;
         const units = affordable;
-        const spent = affordable*target/(1-fee);
+        const spent = affordable*target/(1-stockRate);
         s.entryCost = spent; s.entryDate = masterDates[t]; s.entryPrice = target;
         s.units = units; s.position = 'long';
         cash -= spent;
