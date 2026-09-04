@@ -2808,6 +2808,16 @@ function mergeStockData(base, incoming){
   return out;
 }
 
+// 탭3 미국ETF/환율 시리즈({dates,close})용 병합 - mergeStockData와 같은 발상(날짜를 키로 병합 후 정렬)이지만
+// OHLCV 여러 필드가 아니라 종가 하나뿐이라 훨씬 단순함.
+function mergeSeriesData(base, incomingPairs){
+  const map = new Map();
+  base.dates.forEach((d,i)=>{ map.set(d, base.close[i]); });
+  incomingPairs.forEach(([d,v])=>{ if(v != null) map.set(d, v); });
+  const dates = Array.from(map.keys()).sort();
+  return { dates, close: dates.map(d=>map.get(d)) };
+}
+
 // ---------- 데이터 관리: KIS API로 최신화 / 새 종목 추가 (백엔드: /api/history) ----------
 function todayYmd(){
   const d = new Date();
@@ -3011,9 +3021,23 @@ document.getElementById('dataUpdateAllBtn').addEventListener('click', async ()=>
   const saved = savePresetOverrides(updatedCodes);
   const saveNote = saved ? ' · 브라우저에 저장됨(다음에 열어도 유지)' : ' · ⚠ 브라우저 저장 실패(용량 초과) - 새로고침하면 초기화될 수 있음';
   const capNote = capFailed > 0 ? ` · 시가총액 조회 실패 ${capFailed}개 [${capFailedDetails.join(' / ')}]` : '';
-  noteEl.textContent = `완료 · 최신화 ${updated}개${backfillNote} · 이미최신 ${skipped}개 · 실패 ${failed}개${capNote}${saveNote}`;
+  // 탭3(개인연금 보유전략) "미국ETF비교"용 연관 미국ETF/환율 데이터도 같이 최신화(위 "10." 참고 - 새 함수).
+  let usEtfNote = '';
+  try{
+    noteEl.textContent = `연관 미국ETF/환율 확인 중...`;
+    const usEtfResult = await updateUsEtfAndFxData();
+    const errCount = Object.keys(usEtfResult.errors || {}).length;
+    usEtfNote = usEtfResult.addedDays > 0 ? ` · 미국ETF/환율 ${usEtfResult.addedDays}건 추가` : ' · 미국ETF/환율 이미최신';
+    if(errCount > 0) usEtfNote += ` (일부실패: ${Object.keys(usEtfResult.errors).join(', ')})`;
+  }catch(err){
+    console.warn('미국ETF/환율 최신화 실패:', err);
+    usEtfNote = ' · 미국ETF/환율 최신화 실패';
+  }
+
+  noteEl.textContent = `완료 · 최신화 ${updated}개${backfillNote} · 이미최신 ${skipped}개 · 실패 ${failed}개${capNote}${saveNote}${usEtfNote}`;
   btn.disabled = false;
   refreshAllPresetUI();
+  updatePenUsEtfNote();
 });
 
 // 여러 줄("코드,종목명")을 파싱 - 빈 줄/공백은 무시, 형식이 이상한 줄은 파싱 단계에서 걸러서 error에 담음.
@@ -3940,10 +3964,15 @@ function renderPenPresetChecklist(){
   const prevChecked = hasPrevState ? new Set(Array.from(el.querySelectorAll('.penPresetChk:checked')).map(c=>c.value)) : null;
   el.innerHTML = PRESET_INFO_LIST.map(p => {
     const checked = (hasPrevState ? prevChecked.has(p.code) : PEN_DEFAULT_CODES.includes(p.code)) ? 'checked' : '';
+    const mappedTicker = PEN_US_ETF_MAP[p.code];
+    const subLabel = mappedTicker ? `<div style="font-size:10.5px; color:var(--text-dim); margin-top:1px; margin-left:22px;">↳ 추종 미국ETF: ${mappedTicker}</div>` : '';
     return `
-      <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text); cursor:pointer; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 10px;">
-        <input type="checkbox" class="penPresetChk" value="${p.code}" ${checked}>
-        ${p.name} (${p.code})
+      <label style="display:flex; flex-direction:column; gap:2px; font-size:12.5px; color:var(--text); cursor:pointer; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 10px;">
+        <span style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" class="penPresetChk" value="${p.code}" ${checked}>
+          ${p.name} (${p.code})
+        </span>
+        ${subLabel}
       </label>
     `;
   }).join('');
@@ -3971,6 +4000,83 @@ function buildUsEtfKrwSeries(ticker){
   const result = { dates, close };
   _usEtfKrwCache[ticker] = result;
   return result;
+}
+
+// 미국ETF/환율 데이터는 PRESETS와 달리 Vercel Blob(여러 기기 동기화)엔 안 올리고 이 기기의
+// localStorage에만 저장함 - 참고용 보조 데이터라 기기마다 따로 최신화해도 문제없고, PRESETS 오버라이드
+// Blob에 매번 900KB+를 얹으면 그 저장/전송 비용만 커짐(위 "1." 패턴과 의도적으로 다르게 감).
+const PEN_US_ETF_OVERRIDE_KEY = 'pen_us_etf_override_v1';
+function loadUsEtfOverrides(){
+  try{
+    const raw = localStorage.getItem(PEN_US_ETF_OVERRIDE_KEY);
+    if(!raw) return;
+    const saved = JSON.parse(raw);
+    if(saved.usEtf){
+      Object.keys(saved.usEtf).forEach(ticker => {
+        if(US_ETF_DATA[ticker]) US_ETF_DATA[ticker] = saved.usEtf[ticker]; // 내장 티커만 덮어씀(새 티커 추가는 아직 미지원)
+      });
+    }
+    if(saved.usdKrw){
+      USD_KRW_DATA.dates = saved.usdKrw.dates; // const라 재할당은 안 되지만 프로퍼티 교체는 가능
+      USD_KRW_DATA.close = saved.usdKrw.close;
+    }
+  }catch(e){ console.warn('저장된 미국ETF/환율 최신 데이터를 불러오지 못했습니다:', e); }
+}
+function saveUsEtfOverrides(){
+  try{
+    const usEtf = {};
+    Object.keys(US_ETF_DATA).forEach(ticker => { usEtf[ticker] = US_ETF_DATA[ticker]; });
+    localStorage.setItem(PEN_US_ETF_OVERRIDE_KEY, JSON.stringify({ usEtf, usdKrw: { dates: USD_KRW_DATA.dates, close: USD_KRW_DATA.close } }));
+  }catch(e){ console.warn('미국ETF/환율 최신 데이터를 브라우저에 저장하지 못했습니다(용량 초과 등):', e); }
+}
+loadUsEtfOverrides();
+
+// "전체 종목 최신화"에서 같이 호출됨 - US_ETF_DATA의 각 티커 + USD/KRW 환율(야후 티커 "KRW=X")을
+// 서버 프록시(/api/usetf, api/usetf.py)로 한 번에 조회해서 마지막 저장일 다음날부터 오늘까지만 받아옴.
+// 야후 파이낸스는 브라우저에서 직접 fetch하면 CORS로 막혀서 KIS와 동일하게 서버 함수를 거쳐야 함.
+async function updateUsEtfAndFxData(){
+  const tickers = Object.keys(US_ETF_DATA);
+  const seriesByApiSymbol = {}; // "KRW=X" -> USD_KRW_DATA, 나머지 -> US_ETF_DATA[ticker]
+  tickers.forEach(t => { seriesByApiSymbol[t] = US_ETF_DATA[t]; });
+  seriesByApiSymbol['KRW=X'] = USD_KRW_DATA;
+
+  // 날짜 하루 더하기는 반드시 ymdAddDays()(로컬 연/월/일 기준)로 해야 함 - Date.toISOString()은 UTC로
+  // 변환해서, KST(UTC+9)에서는 자정 근처 날짜가 하루 밀려버리는 문제가 있음(실제로 이 함수를 처음 짤 때
+  // toISOString()을 썼다가 겪은 버그 - computeMonthlyFirstTradingDayIndices가 Date 객체 대신 문자열
+  // 비교를 쓰는 것과 같은 이유).
+  const todayYmdStr = todayYmd();
+  const todayDashStr = `${todayYmdStr.slice(0,4)}-${todayYmdStr.slice(4,6)}-${todayYmdStr.slice(6,8)}`;
+  let earliestStartYmd = null;
+  Object.values(seriesByApiSymbol).forEach(ds => {
+    const lastDate = ds.dates.length > 0 ? ds.dates[ds.dates.length-1] : '2000-01-01';
+    if(lastDate >= todayDashStr) return; // 이미 오늘자까지 있음
+    const nextYmd = ymdAddDays(dateStrToYmd(lastDate), 1);
+    if(earliestStartYmd === null || nextYmd < earliestStartYmd) earliestStartYmd = nextYmd;
+  });
+  if(earliestStartYmd === null) return { addedDays: 0, errors: {} }; // 전부 오늘자까지 최신
+
+  const symbols = Object.keys(seriesByApiSymbol);
+  const resp = await fetch(`/api/usetf?symbols=${encodeURIComponent(symbols.join(','))}&start=${earliestStartYmd}&end=${todayYmdStr}`);
+  if(!resp.ok) throw new Error(`서버 응답 오류(${resp.status})`);
+  const data = await resp.json();
+  if(data.error) throw new Error(data.error);
+
+  let addedDays = 0;
+  Object.entries(data.results || {}).forEach(([symbol, pairs]) => {
+    const ds = seriesByApiSymbol[symbol];
+    if(!ds || !pairs || pairs.length === 0) return;
+    const beforeLen = ds.dates.length;
+    const merged = mergeSeriesData(ds, pairs);
+    if(symbol === 'KRW=X'){
+      USD_KRW_DATA.dates = merged.dates; USD_KRW_DATA.close = merged.close;
+    } else {
+      US_ETF_DATA[symbol] = merged;
+    }
+    addedDays += Math.max(0, merged.dates.length - beforeLen);
+  });
+  Object.keys(_usEtfKrwCache).forEach(k => delete _usEtfKrwCache[k]); // 환산 캐시 무효화 - 다음 백테스트 때 새 데이터로 다시 계산됨
+  saveUsEtfOverrides();
+  return { addedDays, errors: data.errors || {} };
 }
 
 function getSelectedPenDatasets(){
