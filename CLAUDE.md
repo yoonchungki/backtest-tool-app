@@ -11,6 +11,7 @@
 - `index.html` — 프론트 전체(단일 파일, HTML+CSS+JS, 내장 데이터셋 포함이라 큼(5MB+) — Read 툴로 통째로 못 열림, 큰 상수를 볼 땐 Read도 실패할 수 있으니 Python으로 `content.index('const X')` 찾아서 슬라이스하는 식으로 볼 것, 편집은 offset/limit Read나 짧은 고유 앵커 문자열로 Edit). `PRESETS`(탭1/탭2용, KIS 원주가 OHLCV)와 `US_ETF_DATA`/`USD_KRW_DATA`(탭3 전용, Yahoo Finance 수정종가+환율)는 완전히 분리된 별개 상수 — 아래 "9." 참고.
 - `api/history.py` — KIS 시세/시가총액 조회 서버리스 함수 (`/api/history`)
 - `api/presets.py` — 여러 기기 동기화용 저장소 (`/api/presets`, Vercel Blob)
+- `api/usetf.py` — 탭3 미국ETF/환율 시세 조회 서버리스 함수(야후 파이낸스 프록시, `/api/usetf`) — 아래 "11." 참고
 - `manifest.json` — PWA 홈화면 추가용
 - `vercel.json` — builds/routes 설정 (Python 함수 + 정적 파일 라우팅 분리)
 
@@ -103,6 +104,16 @@
 - **규칙A 역변동성 가중**: 리밸런싱일마다 자산별 연율화 변동성(최근 60거래일 로그수익률 표준편차×√252, 반드시 "어제까지" 데이터만 사용 — lookahead 없음)으로 목표비중을 나눈 뒤 재정규화. 변동성은 종목마다 **자기 자신의 가격 인덱스 기준**으로 60일치를 셈(종목별 상장일이 달라도 안전). 그날 리밸런싱 대상 종목 중 하나라도 60일치가 안 쌓였으면(전략 시작 초반) 역변동성 조정 없이 원래 목표비중 그대로 씀.
 - **규칙B 자산곡선 DD컷**: 전략 자체 평가액 곡선(`curve`)이 어제까지 사상최고치(`runningPeak`) 대비 -7% 넘게 빠져 있으면, 그날 리밸런싱 목표비중 전체에 0.5배를 곱함 — 축소분은 매수하지 않고 그대로 현금으로 남음(현금 이자는 미반영, 사용자가 사전에 "빼도 결과 큰 영향 없다"고 확인). 두 규칙 동시 적용 시 순서는 역변동성 재정규화 → DD컷 축소.
 - **검증**: 합성 데이터로 각각 독립 테스트. 역변동성은 변동성 비율 20:1인 자산 2개로 예산배분이 대략 20:1로 갈리는지 확인. DD컷은 -20% 단일크래시 시나리오로 다음 리밸런싱일에 정확히 보유량 절반이 매도되는지 확인 — 그 이후 매달 소액의 추가 매도가 계속 찍혀서 처음엔 버그로 의심됐으나, 현금엔 이자가 안 붙고 주식만 계속 소폭 상승하는 합성 시나리오라 "현금 50% 유지" 목표를 매달 다시 맞추려고 몇 주씩 트리밍하는 게 정상 동작임을 확인함. 실데이터(탭3 미국ETF환산 5종목, 22년치, 두 규칙 모두 ON)로도 에러 없이 끝까지 실행되고 결과표가 정상 표시되는 것까지 확인.
+
+### 11. 탭3 "미국ETF비교" 데이터도 "전체 종목 최신화"에 포함 + 종목별 매핑 표시
+2026-09-04 추가. "9."의 `US_ETF_DATA`/`USD_KRW_DATA`는 그때까지 이 대화에서 dev-time에 한 번 받아서 박아넣은 스냅샷이라, 시간이 지나면 국내 KIS 데이터(항상 최신화됨)와 날짜가 안 맞아 뒤처지는 문제가 있었음 — 기존 "전체 종목 최신화" 버튼을 누르면 이 데이터도 같이 최신 날짜까지 갱신되도록 함.
+
+- **서버 프록시 신설(`api/usetf.py`, `/api/usetf`)**: 야후 파이낸스 차트 API를 브라우저에서 직접 fetch하면 CORS로 막혀서(Access-Control-Allow-Origin 없음), `api/history.py`(KIS 프록시)와 같은 이유로 서버 함수를 거침. `?symbols=QQQ,SOXX,...,KRW=X&start=YYYYMMDD&end=YYYYMMDD`로 여러 심볼을 한 번에 배치 조회(marketcap_batch와 같은 이유 — 심볼마다 왕복하면 느림), 심볼별 실패는 `errors`에 개별 기록하고 나머지는 계속 진행. USD/KRW 환율의 야후 심볼은 `"KRW=X"`.
+- **클라이언트 쪽 갱신(`updateUsEtfAndFxData()`)**: `US_ETF_DATA`의 각 티커 + `USD_KRW_DATA`마다 저장된 마지막 날짜 다음날부터 오늘까지만 요청(전부 최신이면 네트워크 호출 자체를 생략). 받아온 결과는 `mergeSeriesData()`(날짜 키로 병합 후 정렬, `mergeStockData`의 단일필드 버전)로 기존 배열에 병합, 환산 캐시(`_usEtfKrwCache`)를 비워서 다음 백테스트 때 새 데이터로 다시 계산되게 함. **"전체 종목 최신화"(`dataUpdateAllBtn`) 핸들러 끝에서 KIS 데이터 최신화 뒤에 이어서 호출**됨(실패해도 KIS 쪽 최신화 결과에는 영향 없게 별도 try/catch).
+- **저장 위치는 의도적으로 PRESETS와 다르게 함**: `US_ETF_DATA`/`USD_KRW_DATA`는 Vercel Blob(`/api/presets`, 여러 기기 동기화용)에 안 얹고 이 기기의 `localStorage`(키 `pen_us_etf_override_v1`)에만 저장함(`saveUsEtfOverrides()`/`loadUsEtfOverrides()`) — 참고용 보조 데이터라 기기마다 따로 최신화해도 문제없고, 이미 900KB+인 이 데이터를 PRESETS 오버라이드 Blob에 매번 함께 얹으면 그 저장·전송 비용만 커짐. 앞으로 여러 기기 동기화가 필요해지면 그때 "1."의 병합+tombstone 패턴을 이쪽에도 적용할 것.
+- **날짜 하루 더하기는 반드시 `ymdAddDays()`(로컬 연/월/일 기준)로**: 처음 짤 때 `Date.toISOString()`으로 다음날을 계산했다가, KST(UTC+9)에서 자정 근처 날짜가 하루 밀리는 버그를 겪음(로컬 자정을 UTC로 변환하면 전날 오후가 돼서 `.slice(0,10)`이 하루 전 날짜를 돌려줌) — `computeMonthlyFirstTradingDayIndices`가 Date 객체 대신 문자열 비교를 쓰는 것과 같은 부류의 함정. 기존에 있던 `todayYmd()`/`ymdAddDays()`(로컬 `getFullYear`/`getMonth`/`getDate` 기반)로 바꿔서 해결.
+- **종목 선택 체크리스트에 매핑 표시**: `renderPenPresetChecklist()`에서 `PEN_US_ETF_MAP`에 있는 종목마다 체크박스 아래에 작은 글씨로 "↳ 추종 미국ETF: QQQ" 식으로 표시(매핑 없는 종목은 표시 없음) — 사용자가 "미국ETF비교"를 켜기 전에도 어떤 종목이 환산 대상인지 미리 알 수 있게 함.
+- **검증**: `fetch`를 몽키패치해서 `/api/usetf` 응답을 목업으로 대체 후 `updateUsEtfAndFxData()` 직접 호출 — 마지막 저장일 다음날부터(타임존 버그 수정 후 정확한 날짜로) 오늘까지만 요청하는지, 병합 후 배열 길이/마지막 날짜가 맞는지, `localStorage` 저장 후 새로고침해도 유지되는지, 이미 최신이면 네트워크 호출 자체가 생략되는지 확인. `api/usetf.py`는 `python -m py_compile`로 문법 검증(로컬 Python `ssl` 모듈이 깨져있어(위 "9." 참고) `requests`로 실제 야후 호출까지는 로컬에서 테스트 못 함 — Vercel 배포 환경에서는 `api/history.py`가 이미 같은 `requests` 패턴으로 정상 동작 중이라 문제없을 것으로 판단).
 
 ## 주요 변경 이력 (최근 → 과거, 상세 배경은 `git log`로 각 커밋 메시지 확인)
 - `cec8208` 탭3에 "미국ETF비교" 체크박스 추가(위 "9." 참고) — 국내 상장 기간 짧은 종목을 추종 미국 ETF×USD/KRW 환율 환산값으로 대체해서 훨씬 긴 기간 백테스트 가능. `US_ETF_DATA`/`USD_KRW_DATA`/`PEN_US_ETF_MAP` 새 상수 추가(파일 크기 약 1MB 증가, `PRESETS`와 분리 관리).
