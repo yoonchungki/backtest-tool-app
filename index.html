@@ -123,8 +123,9 @@ canvas{max-width:100%;}
   <div class="tabNav" style="display:flex; gap:6px; margin-bottom:20px; border-bottom:1px solid var(--line); flex-wrap:wrap;">
     <button class="tabBtn active" data-tab="tab1">1. 변동성 돌파 전략</button>
     <button class="tabBtn" data-tab="tab1b">2. 변동성전략 (여러종목투자)</button>
-    <button class="tabBtn" data-tab="tab2">3. 섹터ETF 매매전략</button>
-    <button class="tabBtn" data-tab="tab3">4. 상관관계 분석</button>
+    <button class="tabBtn" data-tab="tabPension">3. 개인연금 보유전략</button>
+    <button class="tabBtn" data-tab="tab2">4. 섹터ETF 매매전략</button>
+    <button class="tabBtn" data-tab="tab3">5. 상관관계 분석</button>
   </div>
 
   <div id="tab1" class="tabPanel">
@@ -433,9 +434,85 @@ canvas{max-width:100%;}
   </div>
   </div>
 
+  <div id="tabPension" class="tabPanel" style="display:none;">
+  <div class="section">
+    <div class="sectionHead"><h2>3. 개인연금 보유전략</h2></div>
+    <div class="sectionDesc">
+      k값 신호 없이, 여러 종목을 처음에 목표비중대로 매수해서 계속 보유하다가 정해진 간격마다 다시 목표비중에 맞춰 리밸런싱(매도/매수)하는 전략입니다. 그래프·거래 이력 표시는 탭2(여러종목투자)와 동일합니다.
+    </div>
+    <div class="panel">
+      <div class="panelTitle" style="margin-bottom:10px;">저장된 전략 (종목 선택 + 비중 + 설정을 통째로 저장/불러오기)</div>
+      <div id="penStrategyPresetList" style="margin-bottom:10px; display:flex; flex-wrap:wrap; gap:8px;"></div>
+      <div class="btnRow" style="margin-bottom:6px; flex-wrap:wrap;">
+        <input type="text" id="penStrategyPresetName" placeholder="예: 연금저축#1" style="flex:1; min-width:160px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:10px 12px; border-radius:8px;">
+        <button class="btn" id="penStrategyPresetSaveBtn">현재 설정 저장</button>
+      </div>
+      <div class="comboNote" id="penStrategyPresetNote" style="margin-bottom:16px;"></div>
+
+      <div class="panelTitle" style="margin-bottom:10px;">보유할 종목 선택 (내장 데이터셋)</div>
+      <div id="penPresetChecklist" class="rangeGrid" style="margin-bottom:16px;"></div>
+
+      <div class="rangeGrid" style="margin-bottom:14px;">
+        <div class="rangeCtrl"><label>총 투자금액(원)</label><input type="number" id="penTotalInitCap" value="10000000" step="100000" min="0"></div>
+        <div class="rangeCtrl"><label>리밸런싱 간격(개월)</label><input type="number" id="penRebalanceMonths" value="12" step="1" min="1"></div>
+      </div>
+
+      <div class="panelTitle" style="margin-bottom:10px;">종목별 초기 비중(%)</div>
+      <div id="penStockParamsTable" style="margin-bottom:6px;"></div>
+      <div class="comboNote" id="penWeightSumNote" style="margin-bottom:16px;"></div>
+
+      <div class="uploadPanel" style="margin-bottom:14px;">
+        <div class="rangeCtrl" style="min-width:160px;"><label>분석 시작일</label><input type="date" id="penPeriodStart"></div>
+        <div class="rangeCtrl" style="min-width:160px;"><label>분석 종료일</label><input type="date" id="penPeriodEnd"></div>
+        <button class="btn btnGhost" id="penPeriodFullBtn" style="align-self:flex-end;">전체기간으로 설정</button>
+        <button class="btn btnGhost" id="penPeriodOverlapBtn" style="align-self:flex-end;">겹쳐진기간으로 설정</button>
+        <span id="penPeriodStatus" style="font-family:var(--mono); font-size:12px; color:var(--text-dim); align-self:flex-end;"></span>
+      </div>
+
+      <div class="rangeGrid" style="margin-top:10px; margin-bottom:14px;">
+        <div class="rangeCtrl"><label>수수료(%, 편도)</label><input type="number" id="penFee" value="0.015" step="0.005"></div>
+      </div>
+      <div class="btnRow" style="margin-bottom:14px;">
+        <button class="btn" id="penRunBtn">백테스트 실행</button>
+        <span class="comboNote" id="penNote"></span>
+      </div>
+
+      <div id="penResults"></div>
+      <div id="penStockSummary" style="margin-top:16px;"></div>
+
+      <div class="chartWrap" style="margin-top:16px;">
+        <div class="chartHead"><span class="stockLabel">평가금액 추이 (리밸런싱 전략 vs 최초비중 매수 후 보유)</span></div>
+        <canvas id="penChart" height="90"></canvas>
+      </div>
+      <div class="chartHint" style="display:flex; justify-content:flex-end; gap:14px;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="penLogScale"> 로그 스케일
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="penShowMdd" checked> MDD 표시
+        </label>
+      </div>
+
+      <div style="margin-top:22px; padding-top:18px; border-top:1px solid var(--line);">
+        <div class="panelTitle" style="margin-bottom:10px;">시작일 기준 1년 단위 성과 (전체 포트폴리오)</div>
+        <div id="penYearlyTable"></div>
+      </div>
+
+      <div style="margin-top:22px; padding-top:18px; border-top:1px solid var(--line);">
+        <div class="panelTitle" style="margin-bottom:10px;">거래 이력 (리밸런싱 시점)</div>
+        <div class="btnRow" style="margin-bottom:10px;">
+          <span style="font-family:var(--mono); font-size:12px; color:var(--text-dim);" id="penTradeLogCount"></span>
+          <button class="btn btnGhost" id="penTradeLogExportBtn" style="font-size:12px; padding:6px 14px;">엑셀로 다운로드</button>
+        </div>
+        <div id="penTradeLogTable" style="max-height:420px; overflow-y:auto; border:1px solid var(--line); border-radius:8px;"></div>
+      </div>
+    </div>
+  </div>
+  </div>
+
   <div id="tab2" class="tabPanel" style="display:none;">
   <div class="section">
-    <div class="sectionHead"><h2>3. 섹터ETF 매매전략</h2></div>
+    <div class="sectionHead"><h2>4. 섹터ETF 매매전략</h2></div>
     <div class="sectionDesc">
       매일, 과거 N일 거래대금의 중간값이 큰 순서로 상위 X개 종목을 후보로 두고, 그 중 거래대금 순위가 가장 높으면서 <b>매수 목표가 = 당일 시가 + k매수 × (전일 고가−전일 저가, 그 종목 기준)</b> 조건(목표가가 당일 저가~고가 사이)을 만족하는 첫 종목을 그 가격에 매수합니다(순위대로 확인). 매수 다음날 시가에 매도합니다.
       각 종목은 자신의 상장일부터 데이터가 있는 대로 참여하며, 전체 기간이 겹칠 필요는 없습니다 (먼저 상장된 종목부터 시작하고, 나중에 상장된 종목은 그 시점부터 후보에 추가됩니다).
@@ -532,7 +609,7 @@ canvas{max-width:100%;}
 
   <div id="tab3" class="tabPanel" style="display:none;">
   <div class="section">
-    <div class="sectionHead"><h2>4. 종목 간 상관관계 분석</h2></div>
+    <div class="sectionHead"><h2>5. 종목 간 상관관계 분석</h2></div>
     <div class="sectionDesc">
       일별 수익률(전일 대비 등락률) 사이의 상관계수를 계산합니다. 겹치는 기간만 비교 대상이 됩니다.
       종목을 정확히 2개 선택하면 가격추이·산점도가, 3개 이상 선택하면 상관계수 매트릭스가 표시됩니다.
@@ -606,6 +683,8 @@ let marketCapByCode = {}; // {종목코드: 시가총액(억원)} - "전체 종�
 let deletedCodes = new Set(); // 사용자가 "종목 삭제"로 지운 코드 - 기본 내장 종목도 여기 들어가면 계속 숨겨짐(다음 로드 때도)
 let mvStrategyPresets = {}; // {전략이름: {codes, params, maFilterOn, maPeriod, prevCloseOn, mvInitCap, slippageOn, slippageMode, slipBuyTicks, slipSellTicks}} - 탭1-1(여러종목투자) 저장된 전략
 let deletedMvStrategyNames = new Set(); // 삭제된 전략 이름 - deletedCodes와 동일한 이유(병합만 하는 로직이라 삭제 자체를 표현 못 해서 별도 추적 필요)
+let penStrategyPresets = {}; // {전략이름: {codes, weights, rebalanceMonths, penInitCap, ...}} - 탭3(개인연금 보유전략) 저장된 전략, mvStrategyPresets와 동일한 병합/tombstone 패턴
+let deletedPenStrategyNames = new Set();
 
 function applyOverrideData(saved){
   if(!saved) return;
@@ -645,6 +724,17 @@ function applyOverrideData(saved){
   if(saved.mvStrategyPresets){
     Object.assign(mvStrategyPresets, saved.mvStrategyPresets);
   }
+  // 탭3(개인연금 보유전략) 저장된 전략도 동일한 패턴으로 화해/병합.
+  if(saved.penStrategyPresets){
+    const serverDeletedNames = new Set(saved.deletedPenStrategyNames || []);
+    Object.keys(saved.penStrategyPresets).forEach(name => { if(!serverDeletedNames.has(name)) deletedPenStrategyNames.delete(name); });
+  }
+  if(saved.deletedPenStrategyNames){
+    saved.deletedPenStrategyNames.forEach(name => deletedPenStrategyNames.add(name));
+  }
+  if(saved.penStrategyPresets){
+    Object.assign(penStrategyPresets, saved.penStrategyPresets);
+  }
   // 삭제된 코드는 항상 마지막에 걸러냄 - infoList 병합으로 되살아나는 것도 여기서 다시 막아줌
   if(deletedCodes.size > 0){
     for(let i=PRESET_INFO_LIST.length-1;i>=0;i--){
@@ -654,6 +744,7 @@ function applyOverrideData(saved){
   }
   // 삭제된 전략도 동일하게 병합 후 다시 걸러냄 - 다른 기기/이전 저장분이 되살리지 못하게 함
   deletedMvStrategyNames.forEach(name => { delete mvStrategyPresets[name]; });
+  deletedPenStrategyNames.forEach(name => { delete penStrategyPresets[name]; });
 }
 
 function loadPresetOverrides(){
@@ -684,6 +775,11 @@ function savePresetOverrides(updatedCodes){
   saved.deletedMvStrategyNames = Array.from(deletedMvStrategyNames);
   deletedMvStrategyNames.forEach(name => { delete saved.mvStrategyPresets[name]; }); // 삭제된 전략은 병합 후에도 다시 제거
   Object.assign(mvStrategyPresets, saved.mvStrategyPresets);
+  // 탭3(개인연금 보유전략) 저장된 전략도 동일한 패턴으로 병합 저장.
+  saved.penStrategyPresets = Object.assign({}, saved.penStrategyPresets || {}, penStrategyPresets);
+  saved.deletedPenStrategyNames = Array.from(deletedPenStrategyNames);
+  deletedPenStrategyNames.forEach(name => { delete saved.penStrategyPresets[name]; });
+  Object.assign(penStrategyPresets, saved.penStrategyPresets);
 
   let localOk = true;
   try{
@@ -721,10 +817,13 @@ async function syncPresetOverridesFromServer(){
       deletedCodes: Array.from(deletedCodes),
       mvStrategyPresets: mvStrategyPresets,
       deletedMvStrategyNames: Array.from(deletedMvStrategyNames),
+      penStrategyPresets: penStrategyPresets,
+      deletedPenStrategyNames: Array.from(deletedPenStrategyNames),
     };
     localStorage.setItem(PRESET_OVERRIDE_KEY, JSON.stringify(localSnapshot));
     refreshAllPresetUI();
     if(typeof renderMvStrategyPresetList === 'function') renderMvStrategyPresetList();
+    if(typeof renderPenStrategyPresetList === 'function') renderPenStrategyPresetList();
   }catch(e){ console.warn('서버 최신 데이터 동기화 실패(오프라인 등, 로컬 데이터로 계속 사용):', e); }
 }
 
@@ -2754,6 +2853,7 @@ function rowsToColumnar(rows, stockName, stockCode){
 function refreshAllPresetUI(){
   if(typeof renderSectorPresetChecklist === 'function') renderSectorPresetChecklist();
   if(typeof renderMvPresetChecklist === 'function') renderMvPresetChecklist();
+  if(typeof renderPenPresetChecklist === 'function') renderPenPresetChecklist();
   if(typeof renderCorrPresetChecklist === 'function'){ renderCorrPresetChecklist(); renderCorrelation(); }
   const sel = document.getElementById('presetSelect');
   if(sel){
@@ -3784,6 +3884,571 @@ function updateMvSlippageLabels(){
 }
 document.getElementById('mvSlippageMode').addEventListener('change', updateMvSlippageLabels);
 
+// ---------- 탭 3: 개인연금 보유전략 ----------
+// k값 신호 없이, 선택한 종목을 처음에 목표비중대로 매수해서 보유하다가 정해진 개월 수마다 다시
+// 목표비중으로 리밸런싱(초과분 매도 → 부족분 매수)하는 전략. 화면 구성(그래프/거래이력)은
+// 탭2(여러종목투자, 내부 id는 tab1b/mv 접두어)와 동일하게 맞춤 - 사용자 요청.
+const PEN_DEFAULT_CODES = ["133690", "360750"];
+
+function renderPenPresetChecklist(){
+  const el = document.getElementById('penPresetChecklist');
+  const hasPrevState = el.children.length > 0;
+  const prevChecked = hasPrevState ? new Set(Array.from(el.querySelectorAll('.penPresetChk:checked')).map(c=>c.value)) : null;
+  el.innerHTML = PRESET_INFO_LIST.map(p => {
+    const checked = (hasPrevState ? prevChecked.has(p.code) : PEN_DEFAULT_CODES.includes(p.code)) ? 'checked' : '';
+    return `
+      <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text); cursor:pointer; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 10px;">
+        <input type="checkbox" class="penPresetChk" value="${p.code}" ${checked}>
+        ${p.name} (${p.code})
+      </label>
+    `;
+  }).join('');
+  el.querySelectorAll('.penPresetChk').forEach(chk => {
+    chk.addEventListener('change', ()=>{ updatePenPeriodDefaults(true); renderPenStockParamsTable(); });
+  });
+}
+
+function getSelectedPenDatasets(){
+  const checkedCodes = Array.from(document.querySelectorAll('.penPresetChk:checked')).map(c => c.value);
+  return checkedCodes.map(code => {
+    const info = PRESET_INFO_LIST.find(p=>p.code===code);
+    const raw = PRESETS[code];
+    if(!raw) return null;
+    return { mvKey: code, stockName: info ? info.name : code, ...raw };
+  }).filter(Boolean);
+}
+
+let penStockParams = {}; // key(종목코드) -> {weight} - 초기 목표비중(%)
+
+function renderPenStockParamsTable(){
+  const datasets = getSelectedPenDatasets();
+  const el = document.getElementById('penStockParamsTable');
+  if(datasets.length === 0){ el.innerHTML = ''; updatePenWeightSumNote(); return; }
+  datasets.forEach(ds => {
+    if(!penStockParams[ds.mvKey]) penStockParams[ds.mvKey] = { weight: +(100/datasets.length).toFixed(1) };
+  });
+  const inputStyle = 'width:90px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:6px 8px; border-radius:6px; font-family:var(--mono);';
+  el.innerHTML = `
+    <table class="resultTable">
+      <thead><tr><th>종목</th><th>초기 비중(%)</th></tr></thead>
+      <tbody>
+        ${datasets.map(ds => {
+          const p = penStockParams[ds.mvKey];
+          const key = ds.mvKey.replace(/"/g,'&quot;');
+          return `
+          <tr>
+            <td class="nameCell" style="font-family:var(--body);">${ds.stockName || ds.fileName}</td>
+            <td><input type="number" class="penWeight" data-key="${key}" value="${p.weight}" step="0.5" min="0" style="${inputStyle}"></td>
+          </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+  el.querySelectorAll('.penWeight').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const key = inp.dataset.key;
+      if(!penStockParams[key]) return;
+      penStockParams[key].weight = parseFloat(inp.value) || 0;
+      updatePenWeightSumNote();
+    });
+  });
+  updatePenWeightSumNote();
+}
+function updatePenWeightSumNote(){
+  const noteEl = document.getElementById('penWeightSumNote');
+  if(!noteEl) return;
+  const datasets = getSelectedPenDatasets();
+  if(datasets.length === 0){ noteEl.textContent = ''; return; }
+  const sum = datasets.reduce((a,ds)=> a + ((penStockParams[ds.mvKey]||{}).weight||0), 0);
+  noteEl.textContent = `비중 합계: ${sum.toFixed(1)}% (100%가 아니어도 실행 시 자동으로 정규화해서 반영됩니다)`;
+  noteEl.className = Math.abs(sum-100) < 0.05 ? 'comboNote ok' : 'comboNote warn';
+}
+document.getElementById('penTotalInitCap').addEventListener('input', ()=>{
+  penInitCap = parseFloat(document.getElementById('penTotalInitCap').value) || 0;
+});
+
+function updatePenPeriodDefaults(keepCurrent, mode){
+  mode = mode || 'overlap';
+  const datasets = getSelectedPenDatasets();
+  const startEl = document.getElementById('penPeriodStart');
+  const endEl = document.getElementById('penPeriodEnd');
+  const statusEl = document.getElementById('penPeriodStatus');
+  if(datasets.length === 0) return;
+  let minDate = null, maxDate = null;
+  datasets.forEach(ds => {
+    if(!ds.dates || ds.dates.length===0) return;
+    const first = ds.dates[0], last = ds.dates[ds.dates.length-1];
+    if(mode === 'full'){
+      if(minDate===null || first<minDate) minDate = first;
+      if(maxDate===null || last>maxDate) maxDate = last;
+    } else {
+      if(minDate===null || first>minDate) minDate = first;
+      if(maxDate===null || last<maxDate) maxDate = last;
+    }
+  });
+  if(mode !== 'full' && minDate !== null && maxDate !== null && minDate > maxDate){
+    statusEl.textContent = `선택된 종목들의 데이터 기간이 서로 겹치지 않습니다 (겹치는 구간 없음).`;
+    statusEl.style.color = 'var(--warn)';
+    return;
+  }
+  startEl.min = minDate; startEl.max = maxDate;
+  endEl.min = minDate; endEl.max = maxDate;
+  if(!keepCurrent){ startEl.value = minDate; endEl.value = maxDate; }
+  const label = mode === 'full' ? '선택된 종목들의 전체 기간' : '선택된 종목들이 겹치는 구간';
+  statusEl.textContent = minDate ? `${label}: ${minDate} ~ ${maxDate}` : '';
+  statusEl.style.color = '';
+}
+document.getElementById('penPeriodFullBtn').addEventListener('click', ()=> updatePenPeriodDefaults(false, 'full'));
+document.getElementById('penPeriodOverlapBtn').addEventListener('click', ()=> updatePenPeriodDefaults(false, 'overlap'));
+
+// 저장된 전략 - 종목 선택 + 종목별 비중 + 총투자금/리밸런싱간격/수수료를 통째로 이름 붙여 저장.
+function renderPenStrategyPresetList(){
+  const el = document.getElementById('penStrategyPresetList');
+  if(!el) return;
+  const names = Object.keys(penStrategyPresets).sort();
+  if(names.length === 0){
+    el.innerHTML = '<span style="font-size:12.5px; color:var(--text-dim);">저장된 전략이 아직 없습니다.</span>';
+    return;
+  }
+  el.innerHTML = names.map(name => `
+    <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 12px;">
+      <button type="button" class="btn btnGhost penStrategyLoadBtn" data-name="${name.replace(/"/g,'&quot;')}" style="padding:7px 10px; font-size:12.5px;">${name}</button>
+      <button type="button" class="penStrategyDeleteBtn" data-name="${name.replace(/"/g,'&quot;')}" title="삭제" style="background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px; padding:4px 8px;">×</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('.penStrategyLoadBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=> applyPenStrategySnapshot(btn.dataset.name));
+  });
+  el.querySelectorAll('.penStrategyDeleteBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm(`"${btn.dataset.name}" 전략을 삭제할까요?`)) return;
+      deletedPenStrategyNames.add(btn.dataset.name);
+      delete penStrategyPresets[btn.dataset.name];
+      try{ await syncPresetOverridesFromServer(); }catch(e){}
+      delete penStrategyPresets[btn.dataset.name];
+      savePresetOverrides([]);
+      renderPenStrategyPresetList();
+    });
+  });
+}
+
+function collectPenStrategySnapshot(){
+  const codes = Array.from(document.querySelectorAll('.penPresetChk:checked')).map(c=>c.value);
+  const weights = {};
+  codes.forEach(code => { if(penStockParams[code]) weights[code] = { ...penStockParams[code] }; });
+  return {
+    codes, weights,
+    penInitCap: document.getElementById('penTotalInitCap').value,
+    rebalanceMonths: document.getElementById('penRebalanceMonths').value,
+    fee: document.getElementById('penFee').value,
+  };
+}
+
+async function applyPenStrategySnapshot(name){
+  try{ await syncPresetOverridesFromServer(); }catch(e){}
+  const snap = penStrategyPresets[name];
+  if(!snap) return;
+
+  document.querySelectorAll('.penPresetChk').forEach(chk => { chk.checked = snap.codes.includes(chk.value); });
+  Object.keys(snap.weights || {}).forEach(code => { penStockParams[code] = { ...snap.weights[code] }; });
+
+  document.getElementById('penTotalInitCap').value = snap.penInitCap;
+  penInitCap = parseFloat(snap.penInitCap) || penInitCap;
+  if(snap.rebalanceMonths != null) document.getElementById('penRebalanceMonths').value = snap.rebalanceMonths;
+  if(snap.fee != null) document.getElementById('penFee').value = snap.fee;
+
+  updatePenPeriodDefaults(false);
+  renderPenStockParamsTable();
+  const noteEl = document.getElementById('penStrategyPresetNote');
+  noteEl.textContent = `"${name}" 불러옴 (${snap.codes.length}종목) · 아래 "백테스트 실행"을 눌러주세요.`;
+  noteEl.className = 'comboNote ok';
+}
+
+document.getElementById('penStrategyPresetSaveBtn').addEventListener('click', async ()=>{
+  const nameInput = document.getElementById('penStrategyPresetName');
+  const noteEl = document.getElementById('penStrategyPresetNote');
+  const name = nameInput.value.trim();
+  if(!name){ noteEl.textContent = '전략 이름을 입력해주세요.'; noteEl.className = 'comboNote warn'; return; }
+  const codes = Array.from(document.querySelectorAll('.penPresetChk:checked')).map(c=>c.value);
+  if(codes.length === 0){ noteEl.textContent = '저장할 종목을 먼저 선택해주세요.'; noteEl.className = 'comboNote warn'; return; }
+  if(penStrategyPresets[name] && !confirm(`"${name}"이(가) 이미 있습니다. 덮어쓸까요?`)) return;
+
+  const snapshot = collectPenStrategySnapshot();
+  try{ await syncPresetOverridesFromServer(); }catch(e){}
+  deletedPenStrategyNames.delete(name);
+  penStrategyPresets[name] = snapshot;
+  savePresetOverrides([]);
+  renderPenStrategyPresetList();
+  nameInput.value = '';
+  noteEl.textContent = `"${name}" 저장됨 (${codes.length}종목) · 브라우저에 저장됨(다음에 열어도 유지)`;
+  noteEl.className = 'comboNote ok';
+});
+
+let penInitCap = 10000000;
+
+// 종목별로 독립적인 매매 신호 없이, t=0에 목표비중대로 매수하고 이후 rebalanceMonths(개월)마다
+// 그 시점 평가금액×목표비중으로 다시 맞춤(초과분 매도 → 부족분 매수, 하루 안에서 매도 먼저 처리해
+// 확보한 현금을 매수에 씀 - 탭2 여러종목투자와 동일한 순서). 아직 상장 전(데이터 없음)인 종목은 그
+// 리밸런싱에서 제외하고 나머지 종목끼리 비중을 정규화함.
+function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, feePct, rebalanceMonths){
+  const dateMaps = datasets.map(ds => new Map(ds.dates.map((d,i)=>[d,i])));
+  const n = masterDates.length;
+  const N = datasets.length;
+  const fee = feePct/100;
+  const units = new Array(N).fill(0);
+  const costBasis = new Array(N).fill(0);
+  let cash = 0;
+  const curve = new Array(n);
+  const stockCurves = datasets.map(()=> new Array(n));
+  const tradeLog = [];
+  const perStockTrades = new Array(N).fill(0);
+  const perStockRealizedPnl = new Array(N).fill(0);
+
+  function priceAt(e, t){
+    const idx = dateMaps[e].get(masterDates[t]);
+    return idx === undefined ? null : datasets[e].close[idx];
+  }
+
+  const periods = buildPeriodBoundariesGeneric(masterDates, rebalanceMonths);
+  const rebalanceSet = new Set(periods.slice(1).map(p=>p[0])); // 첫 구간의 시작(t=0)은 최초 매수라 별도 처리, 그 이후 구간 시작마다 리밸런싱
+
+  function doRebalance(t){
+    const avail = [];
+    for(let e=0; e<N; e++){ if(priceAt(e,t) != null) avail.push(e); }
+    if(avail.length === 0) return;
+    const wSum = avail.reduce((a,e)=>a+(weights[e]||0), 0) || 1;
+
+    let totalValue = cash;
+    for(const e of avail) totalValue += units[e]*priceAt(e,t);
+
+    const targetUnits = {};
+    for(const e of avail){
+      const w = (weights[e]||0)/wSum;
+      targetUnits[e] = Math.floor(totalValue*w / priceAt(e,t));
+    }
+    // 1단계: 목표보다 많이 든 종목부터 매도해서 현금 확보
+    for(const e of avail){
+      if(units[e] > targetUnits[e]){
+        const price = priceAt(e,t);
+        const sellUnits = units[e]-targetUnits[e];
+        const proceeds = sellUnits*price*(1-fee);
+        const costPortion = units[e]>0 ? costBasis[e]*(sellUnits/units[e]) : 0;
+        perStockRealizedPnl[e] += proceeds - costPortion;
+        costBasis[e] -= costPortion;
+        units[e] = targetUnits[e];
+        cash += proceeds;
+        perStockTrades[e]++;
+        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매도', price, qty: sellUnits, amount: proceeds, budget: null });
+      }
+    }
+    // 2단계: 확보된 현금으로 목표보다 적게 든 종목 매수
+    for(const e of avail){
+      if(units[e] < targetUnits[e]){
+        const price = priceAt(e,t);
+        const wantUnits = targetUnits[e]-units[e];
+        const maxAffordable = Math.floor((cash*(1-fee))/price);
+        const buyUnits = Math.min(wantUnits, Math.max(0, maxAffordable));
+        if(buyUnits <= 0) continue;
+        const spent = buyUnits*price/(1-fee);
+        costBasis[e] += spent;
+        units[e] += buyUnits;
+        cash -= spent;
+        perStockTrades[e]++;
+        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매수', price, qty: buyUnits, amount: spent, budget: totalValue*((weights[e]||0)/wSum) });
+      }
+    }
+  }
+
+  for(let t=0; t<n; t++){
+    if(t === 0){ cash = totalInitCap; doRebalance(t); }
+    else if(rebalanceSet.has(t)){ doRebalance(t); }
+
+    let v = cash;
+    for(let e=0; e<N; e++){
+      const p = priceAt(e,t);
+      stockCurves[e][t] = p != null ? units[e]*p : (stockCurves[e][t-1] ?? 0);
+      v += p != null ? units[e]*p : 0;
+    }
+    curve[t] = v;
+  }
+
+  const stats = statsFromCurveCustomBase(curve, masterDates, [], 12, totalInitCap);
+  const perStock = datasets.map((ds,e) => ({
+    name: ds.stockName || ds.fileName,
+    held: units[e] > 0,
+    heldValue: stockCurves[e][n-1] || 0,
+    realizedPnl: perStockRealizedPnl[e],
+    trades: perStockTrades[e]
+  }));
+  return { ...stats, dates: masterDates, tradeLog, stockCurves, stockNames: datasets.map(ds=>ds.stockName||ds.fileName), perStock, totalInitCap, finalCash: cash };
+}
+
+// 비교 기준: 리밸런싱 없이 t=0에 목표비중대로 매수해서 그대로 계속 보유(매매 없음).
+function computePenBase(datasets, weights, totalInitCap, masterDates){
+  const dateMaps = datasets.map(ds => new Map(ds.dates.map((d,i)=>[d,i])));
+  const n = masterDates.length;
+  const N = datasets.length;
+  const units = new Array(N).fill(0);
+  const bought = new Array(N).fill(false);
+  const lastPrice = new Array(N).fill(0);
+  const curve = new Array(n);
+  let leftoverCash = 0;
+  let didInit = false;
+  for(let t=0; t<n; t++){
+    if(!didInit){
+      const avail = [];
+      for(let e=0; e<N; e++){ const idx = dateMaps[e].get(masterDates[t]); if(idx !== undefined) avail.push(e); }
+      if(avail.length > 0){
+        const wSum = avail.reduce((a,e)=>a+(weights[e]||0), 0) || 1;
+        let spent = 0;
+        for(const e of avail){
+          const idx = dateMaps[e].get(masterDates[t]);
+          const price = datasets[e].close[idx];
+          const budget = totalInitCap*((weights[e]||0)/wSum);
+          units[e] = Math.floor(budget/price);
+          spent += units[e]*price;
+          bought[e] = true;
+        }
+        leftoverCash = totalInitCap - spent;
+        didInit = true;
+      }
+    }
+    let v = leftoverCash;
+    for(let e=0; e<N; e++){
+      const idx = dateMaps[e].get(masterDates[t]);
+      if(idx !== undefined) lastPrice[e] = datasets[e].close[idx];
+      if(bought[e]) v += units[e]*lastPrice[e];
+    }
+    curve[t] = v;
+  }
+  return curve;
+}
+
+let lastPenResult = null;
+let lastPenBase = null;
+
+function runPenStrategy(){
+  const noteEl = document.getElementById('penNote');
+  const datasets = getSelectedPenDatasets();
+  if(datasets.length < 1){
+    noteEl.textContent = '종목을 최소 1개 이상 선택해주세요.';
+    noteEl.className = 'comboNote warn';
+    return;
+  }
+  renderPenStockParamsTable();
+
+  const feePct = parseFloat(document.getElementById('penFee').value)||0;
+  const rebalanceMonths = Math.max(1, parseInt(document.getElementById('penRebalanceMonths').value)||12);
+
+  const allDatesSet = new Set();
+  datasets.forEach(ds => ds.dates.forEach(d => allDatesSet.add(d)));
+  let masterDates = Array.from(allDatesSet).sort();
+
+  const periodStart = document.getElementById('penPeriodStart').value;
+  const periodEnd = document.getElementById('penPeriodEnd').value;
+  if(periodStart && periodEnd) masterDates = masterDates.filter(d => d>=periodStart && d<=periodEnd);
+  document.getElementById('penPeriodStatus').textContent = masterDates.length ? `${masterDates.length.toLocaleString()}거래일 선택됨` : '';
+
+  if(masterDates.length < 5){
+    noteEl.textContent = '선택된 기간의 거래일이 너무 적습니다.';
+    noteEl.className = 'comboNote warn';
+    return;
+  }
+
+  const weights = {};
+  datasets.forEach(ds => { weights[ds.mvKey] = (penStockParams[ds.mvKey]||{}).weight || 0; });
+  const weightsByIdx = datasets.map(ds => weights[ds.mvKey]);
+
+  const result = simulatePensionPortfolio(datasets, weightsByIdx, masterDates, penInitCap, feePct, rebalanceMonths);
+  lastPenResult = result;
+  const baseCurve = computePenBase(datasets, weightsByIdx, penInitCap, masterDates);
+  lastPenBase = statsFromCurveCustomBase(baseCurve, masterDates, [], 12, result.totalInitCap);
+  lastPenBase.dates = masterDates;
+
+  noteEl.textContent = `종목 ${datasets.length}개 · 총 투자금액 ${fmtWon(result.totalInitCap)} · 리밸런싱 ${rebalanceMonths}개월마다 · 전체 기간 ${masterDates.length}거래일 (${masterDates[0]} ~ ${masterDates[masterDates.length-1]})`;
+  noteEl.className = 'comboNote';
+
+  renderPenResults();
+  renderPenStockSummary();
+  renderPenChart();
+  renderPenYearlyTable();
+  renderPenTradeLogTable();
+}
+
+function renderPenResults(){
+  const r = lastPenResult, b = lastPenBase;
+  if(!r) return;
+  const numStocks = r.perStock.length;
+  const rowHtml = (label, xRaw) => { const x = withTradeRatio(xRaw, numStocks); return `
+    <tr>
+      <td class="nameCell">${label}</td>
+      <td class="${x.ret>=0?'pos':'neg'}">${fmtPct(x.ret)}</td>
+      <td class="${x.cagr>=0?'pos':'neg'}">${fmtPct(x.cagr)}</td>
+      <td>${(x.mdd*100).toFixed(2)}%</td>
+      <td>${x.calmar!=null ? x.calmar.toFixed(2) : '-'}</td>
+      <td>${x.totalDays!=null ? x.totalDays.toLocaleString() : '-'}</td>
+      <td>${x.trades}</td>
+    </tr>
+  `; };
+  const html = `
+    <table class="resultTable">
+      <thead><tr>
+        <th>전략</th><th>누적수익률</th><th>CAGR</th><th>MDD</th><th>칼마비율</th><th>총거래일</th><th>리밸런싱 거래횟수</th>
+      </tr></thead>
+      <tbody>
+        ${b ? rowHtml('최초비중 매수 후 보유 (기준)', b) : ''}
+        ${rowHtml('리밸런싱 전략', r)}
+      </tbody>
+    </table>
+  `;
+  document.getElementById('penResults').innerHTML = html;
+}
+
+function renderPenStockSummary(){
+  const r = lastPenResult;
+  if(!r) return;
+  const totalDays = r.dates.length;
+  const html = `
+    <div class="panelTitle" style="margin-bottom:8px;">종목별 요약</div>
+    <table class="resultTable">
+      <thead><tr><th>종목</th><th>현재 상태</th><th>리밸런싱 실현손익</th><th>리밸런싱 거래횟수</th></tr></thead>
+      <tbody>
+        ${r.perStock.map(p => `
+          <tr>
+            <td class="nameCell">${p.name}</td>
+            <td>${p.held ? fmtWon(p.heldValue) + ' (보유중)' : '미보유'}</td>
+            <td class="${p.realizedPnl>=0?'pos':'neg'}">${fmtWon(p.realizedPnl)}</td>
+            <td>${p.trades}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div style="font-size:12px; color:var(--text-dim); margin-top:6px;">현재 미배분 현금(계좌 잔액): ${fmtWon(r.finalCash)}</div>
+  `;
+  document.getElementById('penStockSummary').innerHTML = html;
+}
+
+let penChartInstance = null;
+function renderPenChart(){
+  const r = lastPenResult, b = lastPenBase;
+  if(!r) return;
+  const logToggle = document.getElementById('penLogScale');
+  const useLog = logToggle ? logToggle.checked : false;
+  const mddToggle = document.getElementById('penShowMdd');
+  const showMdd = mddToggle ? mddToggle.checked : false;
+  const step = Math.max(1, Math.floor(r.dates.length/500));
+  const labels = [];
+  for(let i=0;i<r.dates.length;i+=step) labels.push(r.dates[i]);
+  function sample(curve){ const out=[]; for(let i=0;i<curve.length;i+=step) out.push(curve[i]); return out; }
+  const datasets = [];
+  if(b){
+    datasets.push({ label:'최초비중 매수 후 보유 (기준)', data:sample(b.curve), borderColor:'#5b6270', backgroundColor:'transparent', borderWidth:2, borderDash:[4,3], pointRadius:0, tension:0.1, yAxisID:'y' });
+    if(showMdd){
+      datasets.push({ label:'최초비중 매수 후 보유 (기준) MDD', data:sample(computeDrawdownSeries(b.curve)), borderColor:'#5b6270', borderDash:[1,3], backgroundColor:'transparent', borderWidth:1, pointRadius:0, tension:0, yAxisID:'yDD' });
+    }
+  }
+  datasets.push({ label:'리밸런싱 전략', data:sample(r.curve), borderColor:'#e5484d', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.1, yAxisID:'y' });
+  if(showMdd){
+    datasets.push({ label:'리밸런싱 전략 MDD', data:sample(computeDrawdownSeries(r.curve)), borderColor:'#e5484d', borderDash:[1,3], backgroundColor:'transparent', borderWidth:1, pointRadius:0, tension:0, yAxisID:'yDD' });
+  }
+  if(penChartInstance) penChartInstance.destroy();
+  const ctx = document.getElementById('penChart').getContext('2d');
+  penChartInstance = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets },
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{ position:'bottom', labels:{color:'#8b93a3', font:{family:'Inter', size:10.5}, boxWidth:11,
+          filter: item => !item.text.endsWith(' MDD') } },
+        tooltip:{ backgroundColor:'#1d212b', borderColor:'#2a2f3a', borderWidth:1, titleColor:'#e8eaed', bodyColor:'#e8eaed',
+          callbacks:{ label: ctx => ctx.dataset.label.endsWith(' MDD')
+            ? ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}%`
+            : ` ${ctx.dataset.label}: ₩${Math.round(ctx.parsed.y).toLocaleString()}` } }
+      },
+      scales:{
+        x:{ ticks:{color:'#8b93a3', maxTicksLimit:8, font:{family:'IBM Plex Mono', size:10}}, grid:{color:'#2a2f3a'} },
+        y:{ type: useLog ? 'logarithmic' : 'linear', ticks:{color:'#8b93a3', font:{family:'IBM Plex Mono', size:10}, callback:v=>'₩'+(v/10000).toLocaleString()+'만'}, grid:{color:'#2a2f3a'} },
+        yDD:{ display: showMdd, position:'right', max:0, ticks:{color:'#8b93a3', font:{family:'IBM Plex Mono', size:10}, callback:v=>v.toFixed(0)+'%'}, grid:{drawOnChartArea:false} }
+      }
+    }
+  });
+}
+
+function renderPenYearlyTable(){
+  const r = lastPenResult;
+  if(!r) return;
+  const periods = computeYearlyStats(r.curve, r.dates, r.tradeList);
+  const html = `
+    <table class="resultTable">
+      <thead><tr><th>기간</th><th>수익률</th><th>CAGR</th><th>MDD</th></tr></thead>
+      <tbody>
+        ${periods.map(p=>`
+          <tr>
+            <td style="font-family:var(--body);">${p.label}</td>
+            <td class="${p.ret>=0?'pos':'neg'}">${fmtPct(p.ret)}</td>
+            <td class="${p.cagr>=0?'pos':'neg'}">${fmtPct(p.cagr)}</td>
+            <td>${(p.mdd*100).toFixed(2)}%</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  document.getElementById('penYearlyTable').innerHTML = html;
+}
+
+function renderPenTradeLogTable(){
+  const r = lastPenResult;
+  if(!r) return;
+  const log = r.tradeLog || [];
+  document.getElementById('penTradeLogCount').textContent = `총 ${log.length}건`;
+  if(log.length === 0){
+    document.getElementById('penTradeLogTable').innerHTML = `<div style="padding:16px; color:var(--text-dim); font-size:13px;">거래 이력이 없습니다.</div>`;
+    return;
+  }
+  const html = `
+    <table class="resultTable" style="margin:0;">
+      <thead><tr><th>#</th><th>날짜</th><th>종목</th><th>구분</th><th>체결가</th><th>수량</th><th>금액</th><th>배정예산</th></tr></thead>
+      <tbody>
+        ${log.map((t,i)=>`
+          <tr>
+            <td style="font-family:var(--body); color:var(--text-dim);">${i+1}</td>
+            <td style="font-family:var(--body);">${t.date}</td>
+            <td style="font-family:var(--body);">${t.name}</td>
+            <td class="${t.side==='매수'?'pos':'neg'}" style="font-family:var(--body);">${t.side}</td>
+            <td>${Math.round(t.price).toLocaleString()}</td>
+            <td>${t.qty.toLocaleString(undefined, {maximumFractionDigits:4})}</td>
+            <td>${fmtWon(t.amount)}</td>
+            <td>${t.budget!=null ? fmtWon(t.budget) : '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  document.getElementById('penTradeLogTable').innerHTML = html;
+}
+
+function exportPenTradeLogToExcel(){
+  const r = lastPenResult;
+  if(!r || !r.tradeLog || r.tradeLog.length===0){ alert('내보낼 거래 이력이 없습니다.'); return; }
+  const rows = [['#','날짜','종목','구분','체결가','수량','금액','배정예산']];
+  r.tradeLog.forEach((t,i)=>{
+    rows.push([i+1, t.date, t.name, t.side, Math.round(t.price), +t.qty.toFixed(4), Math.round(t.amount), t.budget!=null ? Math.round(t.budget) : '']);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '거래이력');
+  XLSX.writeFile(wb, `개인연금보유전략_거래이력.xlsx`);
+}
+document.getElementById('penTradeLogExportBtn').addEventListener('click', exportPenTradeLogToExcel);
+
+document.getElementById('penRunBtn').addEventListener('click', runPenStrategy);
+document.getElementById('penLogScale').addEventListener('change', renderPenChart);
+document.getElementById('penShowMdd').addEventListener('change', renderPenChart);
+document.getElementById('penPeriodStart').addEventListener('change', runPenStrategy);
+document.getElementById('penPeriodEnd').addEventListener('change', runPenStrategy);
+
 // ---------- 탭 전환 ----------
 document.querySelectorAll('.tabBtn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -3805,6 +4470,10 @@ renderMvPresetChecklist();
 renderMvStockParamsTable();
 updateMvPeriodDefaults(false);
 renderMvStrategyPresetList();
+renderPenPresetChecklist();
+renderPenStockParamsTable();
+updatePenPeriodDefaults(false);
+renderPenStrategyPresetList();
 refreshAllPresetUI(); // localStorage에 저장된 추가 종목을 탭1 드롭다운에도 반영(체크박스 목록은 위에서 이미 최신 상태로 그려짐)
 syncPresetOverridesFromServer(); // 다른 기기가 저장해둔 최신 데이터를 백그라운드로 가져와서 덧씌움(느려도 화면은 이미 떠 있음)
 </script>
