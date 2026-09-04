@@ -723,6 +723,8 @@ const PRESET_INFO_LIST = [{"code": "069500", "name": "KODEX 200"}, {"code": "114
 // (이 브라우저/기기 안에서만 적용됨 — GitHub에 커밋된 원본 파일 자체가 바뀌는 건 아님).
 const PRESET_OVERRIDE_KEY = 'btApp_presetOverrides_v1';
 const BASE_PRESET_CODES = new Set(PRESET_INFO_LIST.map(p => p.code));
+// 기본 내장 종목의 tombstone 화해 후 PRESET_INFO_LIST에 다시 넣어줄 때 쓸 원본 스냅샷(2026-09-04 추가, 아래 applyOverrideData 참고).
+const BASE_PRESET_INFO_BY_CODE = new Map(PRESET_INFO_LIST.map(p => [p.code, p]));
 let marketCapByCode = {}; // {종목코드: 시가총액(억원)} - "전체 종목 최신화" 누를 때마다 갱신, 탭1 드롭다운 정렬/표시에 씀
 let deletedCodes = new Set(); // 사용자가 "종목 삭제"로 지운 코드 - 기본 내장 종목도 여기 들어가면 계속 숨겨짐(다음 로드 때도)
 let mvStrategyPresets = {}; // {전략이름: {codes, params, maFilterOn, maPeriod, prevCloseOn, mvInitCap, slippageOn, slippageMode, slipBuyTicks, slipSellTicks}} - 탭1-1(여러종목투자) 저장된 전략
@@ -750,10 +752,26 @@ function applyOverrideData(saved){
   // 영원히 안 보이는 버그가 있었음 - "재추가한 기기"만 자기 tombstone을 지우는 기존 수정으로는
   // 다른 기기까지 전파가 안 됐음. 서버가 지금 "삭제 안 됨"으로 보는 코드(infoList엔 있는데
   // deletedCodes엔 없음)는 이 기기의 로컬 tombstone에서도 같이 빼줌.
+  const serverDeletedNow = new Set(saved.deletedCodes || []);
   if(saved.infoList){
-    const serverDeleted = new Set(saved.deletedCodes || []);
-    saved.infoList.forEach(p => { if(!serverDeleted.has(p.code)) deletedCodes.delete(p.code); });
+    saved.infoList.forEach(p => { if(!serverDeletedNow.has(p.code)) deletedCodes.delete(p.code); });
   }
+  // 기본 내장 종목(BASE_PRESET_CODES)도 동일하게 화해해야 함 - infoList엔 기본 내장 종목이 애초에 안
+  // 실려서(savePresetOverrides가 저장할 때 BASE_PRESET_CODES를 걸러냄) 바로 위 재조정 대상에서 늘
+  // 빠져 있었음. 그래서 과거 어느 기기에서 기본 내장 종목을 한 번 삭제한 적이 있으면, 서버
+  // deletedCodes에선 이미 빠졌어도 그 기기의 로컬 tombstone은 영원히 안 풀리는 문제가 있었음
+  // (2026-09-04, KODEX 200미국채혼합/284430이 폰에서만 계속 안 보이는 것으로 실제 발견).
+  // tombstone만 지우는 걸로는 부족함 - 예전에 이미 스플라이스로 PRESET_INFO_LIST에서 빠져나간
+  // 상태라면(바로 아래 삭제 필터링 블록에서 매번 다시 걸러냄), infoList 병합 경로는 기본 내장
+  // 종목을 다루지 않으므로 다시 채워 넣어줄 방법이 없음 - BASE_PRESET_INFO_BY_CODE 스냅샷으로 복원.
+  BASE_PRESET_CODES.forEach(code => {
+    if(serverDeletedNow.has(code)) return;
+    deletedCodes.delete(code);
+    if(!PRESET_INFO_LIST.find(p => p.code === code)){
+      const info = BASE_PRESET_INFO_BY_CODE.get(code);
+      if(info) PRESET_INFO_LIST.push(info);
+    }
+  });
   if(saved.deletedCodes){
     saved.deletedCodes.forEach(code => deletedCodes.add(code));
   }
