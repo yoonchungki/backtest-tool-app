@@ -4491,7 +4491,7 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
   }));
   // stats.trades는 statsFromCurveCustomBase에 넘긴 빈 tradeList([]) 때문에 항상 0이라, 실제
   // 리밸런싱 매수/매도 건수(tradeLog.length)로 덮어씀(...stats 뒤에 와야 0으로 다시 안 덮임).
-  return { ...stats, dates: masterDates, tradeLog, stockCurves, stockNames: datasets.map(ds=>ds.stockName||ds.fileName), perStock, totalInitCap, finalCash: cash, trades: tradeLog.length, ddCutCount };
+  return { ...stats, dates: masterDates, tradeLog, stockCurves, stockNames: datasets.map(ds=>ds.stockName||ds.fileName), perStock, totalInitCap, finalCash: cash, trades: tradeLog.length, ddCutCount, rebalanceCount: rebalanceSet.size };
 }
 
 // 비교 기준: 리밸런싱 없이 t=0에 목표비중대로 매수해서 그대로 계속 보유(매매 없음).
@@ -4600,6 +4600,7 @@ function runPenStrategy(){
   lastPenBase.label = '최초비중 매수 후 보유 (기준)';
   lastPenBase.perStock = baseResult.perStock;
   lastPenBase.ddCutCount = 0; // 리밸런싱 자체가 없어서 DD컷 개념이 적용 안 됨
+  lastPenBase.rebalanceCount = 0;
   lastPenBase.finalCash = baseResult.finalCash;
   lastPenBase.trades = 0;
 
@@ -4651,6 +4652,7 @@ function renderPenResults(){
       <td class="${x.cagr>=0?'pos':'neg'}">${fmtPct(x.cagr)}</td>
       <td>${(x.mdd*100).toFixed(2)}%</td>
       <td>${x.calmar!=null ? x.calmar.toFixed(2) : '-'}</td>
+      <td>${x.rebalanceCount!=null ? x.rebalanceCount : '-'}</td>
       <td>${x.trades}</td>
       <td>${x.ddCutCount!=null ? x.ddCutCount : '-'}</td>
       <td>${x.logR2!=null ? x.logR2.toFixed(3) : '-'}</td>
@@ -4659,7 +4661,8 @@ function renderPenResults(){
   const sorted = lastPenResults.slice().sort((a,b)=>(a[penSortState.col]-b[penSortState.col])*penSortState.dir);
   const cols = [
     {key:'visible', label:'표시'}, {key:'label', label:'전략'}, {key:'ret', label:'누적수익률'},
-    {key:'cagr', label:'CAGR'}, {key:'mdd', label:'MDD'}, {key:'calmar', label:'칼마비율'}, {key:'trades', label:'리밸런싱 거래횟수'},
+    {key:'cagr', label:'CAGR'}, {key:'mdd', label:'MDD'}, {key:'calmar', label:'칼마비율'},
+    {key:'rebalanceCount', label:'리밸런싱 횟수'}, {key:'trades', label:'매매 건수'},
     {key:'ddCutCount', label:'DD컷횟수'}, {key:'logR2', label:'로그자산R²'}
   ];
   const html = `
