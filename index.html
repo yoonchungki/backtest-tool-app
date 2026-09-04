@@ -4446,7 +4446,7 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
         units[e] = targetUnits[e];
         cash += proceeds;
         perStockTrades[e]++;
-        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매도', price, qty: sellUnits, amount: proceeds, budget: null });
+        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매도', price, qty: sellUnits, amount: proceeds, budget: null, ratio: normWeight[e]*shrinkFactor });
       }
     }
     // 2단계: 확보된 현금으로 목표보다 적게 든 종목 매수
@@ -4462,7 +4462,7 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
         units[e] += buyUnits;
         cash -= spent;
         perStockTrades[e]++;
-        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매수', price, qty: buyUnits, amount: spent, budget: totalValue*normWeight[e]*shrinkFactor });
+        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매수', price, qty: buyUnits, amount: spent, budget: totalValue*normWeight[e]*shrinkFactor, ratio: normWeight[e]*shrinkFactor });
       }
     }
   }
@@ -4832,7 +4832,7 @@ function renderPenTradeLogTable(){
   }
   const html = `
     <table class="resultTable" style="margin:0;">
-      <thead><tr><th>#</th><th>날짜</th><th>종목</th><th>구분</th><th>체결가</th><th>수량</th><th>금액</th><th>배정예산</th></tr></thead>
+      <thead><tr><th>#</th><th>날짜</th><th>종목</th><th>구분</th><th>체결가</th><th>수량</th><th>금액</th><th>배정예산</th><th>목표비중</th></tr></thead>
       <tbody>
         ${log.map((t,i)=>`
           <tr>
@@ -4844,6 +4844,7 @@ function renderPenTradeLogTable(){
             <td>${t.qty.toLocaleString(undefined, {maximumFractionDigits:4})}</td>
             <td>${fmtWon(t.amount)}</td>
             <td>${t.budget!=null ? fmtWon(t.budget) : '-'}</td>
+            <td>${t.ratio!=null ? (t.ratio*100).toFixed(1)+'%' : '-'}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -4859,9 +4860,9 @@ function exportPenTradeLogToExcel(){
   const chosen = options[+sel.value] || options[0];
   const log = chosen ? (chosen.tradeLog || []) : [];
   if(log.length===0){ alert('내보낼 거래 이력이 없습니다.'); return; }
-  const rows = [['#','날짜','종목','구분','체결가','수량','금액','배정예산']];
+  const rows = [['#','날짜','종목','구분','체결가','수량','금액','배정예산','목표비중(%)']];
   log.forEach((t,i)=>{
-    rows.push([i+1, t.date, t.name, t.side, Math.round(t.price), +t.qty.toFixed(4), Math.round(t.amount), t.budget!=null ? Math.round(t.budget) : '']);
+    rows.push([i+1, t.date, t.name, t.side, Math.round(t.price), +t.qty.toFixed(4), Math.round(t.amount), t.budget!=null ? Math.round(t.budget) : '', t.ratio!=null ? +(t.ratio*100).toFixed(2) : '']);
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
