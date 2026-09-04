@@ -483,6 +483,16 @@ canvas{max-width:100%;}
       <div class="rangeGrid" style="margin-top:10px; margin-bottom:14px;">
         <div class="rangeCtrl"><label>수수료(%, 편도)</label><input type="number" id="penFee" value="0.015" step="0.005"></div>
       </div>
+      <div class="btnRow" style="margin-top:2px; margin-bottom:14px; flex-wrap:wrap;">
+        <label style="display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text); cursor:pointer;">
+          <input type="checkbox" id="penInverseVolOn"> 규칙A: 역변동성 가중 (리밸런싱일마다 목표비중을 최근 60거래일 연율화 변동성으로 나눠서 조정)
+        </label>
+      </div>
+      <div class="btnRow" style="margin-top:2px; margin-bottom:14px; flex-wrap:wrap;">
+        <label style="display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text); cursor:pointer;">
+          <input type="checkbox" id="penDdCutOn"> 규칙B: 자산곡선 DD컷 (전략 자체 평가액이 고점 대비 7% 넘게 빠져 있으면 그날 리밸런싱 비중을 절반으로, 나머지는 현금)
+        </label>
+      </div>
       <div class="btnRow" style="margin-bottom:14px;">
         <button class="btn" id="penRunBtn">백테스트 실행</button>
         <span class="comboNote" id="penNote"></span>
@@ -4144,6 +4154,8 @@ function collectPenStrategySnapshot(){
     rebalanceStep: document.getElementById('penRebalanceStep').value,
     fee: document.getElementById('penFee').value,
     useUsEtf: document.getElementById('penUseUsEtfOn').checked,
+    useInverseVol: document.getElementById('penInverseVolOn').checked,
+    useDdCut: document.getElementById('penDdCutOn').checked,
   };
 }
 
@@ -4167,6 +4179,8 @@ async function applyPenStrategySnapshot(name){
   }
   if(snap.fee != null) document.getElementById('penFee').value = snap.fee;
   document.getElementById('penUseUsEtfOn').checked = !!snap.useUsEtf;
+  document.getElementById('penInverseVolOn').checked = !!snap.useInverseVol;
+  document.getElementById('penDdCutOn').checked = !!snap.useDdCut;
   updatePenUsEtfNote();
 
   updatePenPeriodDefaults(false);
@@ -4198,11 +4212,23 @@ document.getElementById('penStrategyPresetSaveBtn').addEventListener('click', as
 
 let penInitCap = 10000000;
 
-// 종목별로 독립적인 매매 신호 없이, t=0에 목표비중대로 매수하고 이후 rebalanceMonths(개월)마다
-// 그 시점 평가금액×목표비중으로 다시 맞춤(초과분 매도 → 부족분 매수, 하루 안에서 매도 먼저 처리해
-// 확보한 현금을 매수에 씀 - 탭2 여러종목투자와 동일한 순서). 아직 상장 전(데이터 없음)인 종목은 그
-// 리밸런싱에서 제외하고 나머지 종목끼리 비중을 정규화함.
-function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, feePct, rebalanceMonths){
+// 각 달의 "첫 거래일"(전 거래일과 연-월이 다른 날) 인덱스를 오름차순으로 반환. masterDates가
+// "YYYY-MM-DD"라 slice(0,7) 문자열 비교만으로 연/월 변경을 정확히 잡아냄(Date 파싱·타임존 문제 없음).
+// t=0(데이터 시작일)은 항상 포함됨 - 리밸런싱 스케줄러가 여기서 매 rebalanceMonths번째 항목만 골라 씀.
+function computeMonthlyFirstTradingDayIndices(dates){
+  const idxs = [0];
+  for(let t=1; t<dates.length; t++){
+    if(dates[t].slice(0,7) !== dates[t-1].slice(0,7)) idxs.push(t);
+  }
+  return idxs;
+}
+
+// 종목별로 독립적인 매매 신호 없이, t=0에 목표비중대로 매수하고 이후 매 rebalanceMonths번째
+// "그 달의 첫 거래일"마다 그 시점 평가금액×목표비중으로 다시 맞춤(초과분 매도 → 부족분 매수, 하루
+// 안에서 매도 먼저 처리해 확보한 현금을 매수에 씀 - 탭2 여러종목투자와 동일한 순서). 아직 상장 전
+// (데이터 없음)인 종목은 그 리밸런싱에서 제외하고 나머지 종목끼리 비중을 정규화함.
+// useInverseVol/useDdCut: 사용자가 별도로 검증해온 두 규칙(둘 다 옵션, 체크박스로 켜고 끔).
+function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, feePct, rebalanceMonths, useInverseVol, useDdCut){
   const dateMaps = datasets.map(ds => new Map(ds.dates.map((d,i)=>[d,i])));
   const n = masterDates.length;
   const N = datasets.length;
@@ -4215,14 +4241,31 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
   const tradeLog = [];
   const perStockTrades = new Array(N).fill(0);
   const perStockRealizedPnl = new Array(N).fill(0);
+  let runningPeak = -Infinity; // doRebalance(t) 호출 시점엔 curve[0..t-1]까지의 최고치(오늘 값은 아직 반영 안 됨) - DD컷용
 
   function priceAt(e, t){
     const idx = dateMaps[e].get(masterDates[t]);
     return idx === undefined ? null : datasets[e].close[idx];
   }
 
-  const periods = buildPeriodBoundariesGeneric(masterDates, rebalanceMonths);
-  const rebalanceSet = new Set(periods.slice(1).map(p=>p[0])); // 첫 구간의 시작(t=0)은 최초 매수라 별도 처리, 그 이후 구간 시작마다 리밸런싱
+  const monthlyIdxs = computeMonthlyFirstTradingDayIndices(masterDates);
+  const rebalanceSet = new Set(monthlyIdxs.filter((v,i)=> i % rebalanceMonths === 0 && v !== 0)); // 0번째(=t=0, 매 rebalanceMonths의 배수 위치)는 최초 매수라 별도 처리
+
+  // 자산 e의 "어제"(마스터 인덱스 t-1) 시점까지 최근 60거래일 로그수익률의 연율화 변동성.
+  // "1일 전 시점 기준"이라 오늘(t) 수익률은 절대 안 씀(미래참조 방지). 그 종목 자체 시계열의
+  // 인덱스 기준으로 60일을 세므로(마스터 날짜 기준 아님), 종목마다 상장일이 달라도 안전함.
+  // 60거래일이 안 쌓였으면(초기 구간) null.
+  function annualizedVol(e, t){
+    if(t <= 0) return null;
+    const idx = dateMaps[e].get(masterDates[t-1]); // "어제" 시점의 그 종목 자체 인덱스
+    if(idx === undefined || idx < 60) return null;
+    const closeArr = datasets[e].close;
+    const rets = [];
+    for(let k=idx-59; k<=idx; k++) rets.push(Math.log(closeArr[k]/closeArr[k-1]));
+    const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
+    const variance = rets.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(rets.length-1);
+    return Math.sqrt(variance)*Math.sqrt(252);
+  }
 
   function doRebalance(t){
     const avail = [];
@@ -4233,9 +4276,37 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
     let totalValue = cash;
     for(const e of avail) totalValue += units[e]*priceAt(e,t);
 
+    // 규칙A(역변동성 가중): avail 전원의 60일 변동성이 다 나와야 적용 - 하나라도 초기 구간(60일
+    // 미만 데이터)이면 이번 리밸런싱은 그냥 목표비중 그대로 씀(사용자가 준 규칙의 단순화 그대로).
+    let normWeight = {};
+    avail.forEach(e => { normWeight[e] = (weights[e]||0)/wSum; });
+    if(useInverseVol){
+      const vols = {};
+      let allHaveVol = true;
+      for(const e of avail){
+        const v = annualizedVol(e, t);
+        if(v == null || v <= 0){ allHaveVol = false; break; }
+        vols[e] = v;
+      }
+      if(allHaveVol){
+        const rawW = {};
+        avail.forEach(e => { rawW[e] = normWeight[e]/vols[e]; });
+        const rawSum = avail.reduce((a,e)=>a+rawW[e], 0) || 1;
+        avail.forEach(e => { normWeight[e] = rawW[e]/rawSum; });
+      }
+    }
+
+    // 규칙B(DD컷): "어제까지"(curve[t-1], 그때까지의 최고치)의 낙폭 기준. t=0(최초매수)엔 비교할
+    // 과거 곡선이 없으니 적용 안 함.
+    let shrinkFactor = 1.0;
+    if(useDdCut && t > 0 && curve[t-1] != null && runningPeak > 0){
+      const dd = curve[t-1]/runningPeak - 1;
+      if(dd < -0.07) shrinkFactor = 0.5;
+    }
+
     const targetUnits = {};
     for(const e of avail){
-      const w = (weights[e]||0)/wSum;
+      const w = normWeight[e]*shrinkFactor;
       targetUnits[e] = Math.floor(totalValue*w / priceAt(e,t));
     }
     // 1단계: 목표보다 많이 든 종목부터 매도해서 현금 확보
@@ -4266,7 +4337,7 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
         units[e] += buyUnits;
         cash -= spent;
         perStockTrades[e]++;
-        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매수', price, qty: buyUnits, amount: spent, budget: totalValue*((weights[e]||0)/wSum) });
+        tradeLog.push({ date: masterDates[t], name: datasets[e].stockName||datasets[e].fileName, side:'매수', price, qty: buyUnits, amount: spent, budget: totalValue*normWeight[e]*shrinkFactor });
       }
     }
   }
@@ -4282,6 +4353,7 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
       v += p != null ? units[e]*p : 0;
     }
     curve[t] = v;
+    if(v > runningPeak) runningPeak = v;
   }
 
   const stats = statsFromCurveCustomBase(curve, masterDates, [], 12, totalInitCap);
@@ -4389,9 +4461,12 @@ function runPenStrategy(){
   datasets.forEach(ds => { weights[ds.mvKey] = (penStockParams[ds.mvKey]||{}).weight || 0; });
   const weightsByIdx = datasets.map(ds => weights[ds.mvKey]);
 
+  const useInverseVol = document.getElementById('penInverseVolOn').checked;
+  const useDdCut = document.getElementById('penDdCutOn').checked;
+
   const colors = genColors(monthsList.length);
   lastPenResults = monthsList.map((m, i) => {
-    const result = simulatePensionPortfolio(datasets, weightsByIdx, masterDates, penInitCap, feePct, m);
+    const result = simulatePensionPortfolio(datasets, weightsByIdx, masterDates, penInitCap, feePct, m, useInverseVol, useDdCut);
     return { ...result, label: `${m}개월마다`, color: colors[i], months: m };
   });
   const baseResult = computePenBase(datasets, weightsByIdx, penInitCap, masterDates);
@@ -4411,7 +4486,8 @@ function runPenStrategy(){
   }
 
   const monthsLabel = monthsList.length === 1 ? `${monthsList[0]}개월마다` : `${rMin}~${rMax}개월(${rStep}개월 단위) ${monthsList.length}가지`;
-  noteEl.textContent = `종목 ${datasets.length}개 · 총 투자금액 ${fmtWon(penInitCap)} · 리밸런싱 ${monthsLabel} · 전체 기간 ${masterDates.length}거래일 (${masterDates[0]} ~ ${masterDates[masterDates.length-1]})`;
+  const ruleLabel = [useInverseVol ? '역변동성 가중' : null, useDdCut ? 'DD컷' : null].filter(Boolean).join('+');
+  noteEl.textContent = `종목 ${datasets.length}개 · 총 투자금액 ${fmtWon(penInitCap)} · 리밸런싱 ${monthsLabel}(매달 첫 거래일 기준)${ruleLabel ? ' · '+ruleLabel+' 적용' : ''} · 전체 기간 ${masterDates.length}거래일 (${masterDates[0]} ~ ${masterDates[masterDates.length-1]})`;
   noteEl.className = 'comboNote';
 
   renderPenResults();
