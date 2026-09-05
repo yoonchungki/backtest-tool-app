@@ -3287,21 +3287,62 @@ function renderMvPresetChecklist(){
 // 저장된 전략 - 종목 선택 + 종목별 k값/비중/초기투자금 + 리밸런싱/이평/정수주 설정을 통째로 이름 붙여 저장.
 // 매번 8종목씩 다시 세팅하는 게 번거롭다는 요청으로 추가함. 업로드한 엑셀 종목은 세션이 지나면 파일이
 // 다시 없어서 재선택이 안 되므로 저장 대상에서 제외(내장 데이터셋 코드만 저장).
+// 저장된 전략(탭2) 화면 표시 순서 - 이 기기에만 저장(다른 기기랑 동기화 안 함, stock-signal-app의
+// 전략1 카드 순서(STRATEGY1_ORDER_KEY)와 동일한 발상 - 순서는 취향 문제라 굳이 Vercel Blob까지 안 감).
+const MV_STRATEGY_ORDER_KEY = 'btApp_mvStrategyOrder_v1';
+function loadMvStrategyOrder(){
+  try{ return JSON.parse(localStorage.getItem(MV_STRATEGY_ORDER_KEY) || '[]'); }catch(e){ return []; }
+}
+function saveMvStrategyOrder(names){
+  try{ localStorage.setItem(MV_STRATEGY_ORDER_KEY, JSON.stringify(names)); }catch(e){}
+}
+// 저장된 순서대로 정렬하고, 순서 기록에 없는(새로 추가된) 이름은 알파벳순으로 뒤에 붙임.
+function applyMvStrategyOrder(names){
+  const order = loadMvStrategyOrder();
+  const orderIndex = new Map(order.map((n,i)=>[n,i]));
+  return names.slice().sort((a,b)=>{
+    const ai = orderIndex.has(a) ? orderIndex.get(a) : 10000;
+    const bi = orderIndex.has(b) ? orderIndex.get(b) : 10000;
+    return ai !== bi ? ai-bi : a.localeCompare(b);
+  });
+}
+function moveMvStrategy(name, dir){
+  const ordered = applyMvStrategyOrder(Object.keys(mvStrategyPresets));
+  const idx = ordered.indexOf(name);
+  const swapIdx = idx+dir;
+  if(idx<0 || swapIdx<0 || swapIdx>=ordered.length) return;
+  [ordered[idx], ordered[swapIdx]] = [ordered[swapIdx], ordered[idx]];
+  saveMvStrategyOrder(ordered);
+  renderMvStrategyPresetList();
+}
+// 탭 전환 시 맨 앞 전략을 자동으로 불러옴(탭 전환 핸들러에서 호출).
+async function autoApplyFirstMvStrategy(){
+  const names = applyMvStrategyOrder(Object.keys(mvStrategyPresets));
+  if(names.length > 0) await applyMvStrategySnapshot(names[0]);
+}
+
 function renderMvStrategyPresetList(){
   const el = document.getElementById('mvStrategyPresetList');
   if(!el) return;
-  const names = Object.keys(mvStrategyPresets).sort();
+  const names = applyMvStrategyOrder(Object.keys(mvStrategyPresets));
   if(names.length === 0){
     el.innerHTML = '<span style="font-size:12.5px; color:var(--text-dim);">저장된 전략이 아직 없습니다.</span>';
     return;
   }
-  el.innerHTML = names.map(name => `
-    <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 12px;">
+  el.innerHTML = names.map((name, idx) => `
+    <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 6px;">
+      <div style="display:flex; flex-direction:column; gap:0;">
+        <button type="button" class="mvStrategyOrderBtn" data-name="${name.replace(/"/g,'&quot;')}" data-dir="up" ${idx===0?'disabled':''} title="위로" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:9px; padding:0 4px; line-height:1.3;">▲</button>
+        <button type="button" class="mvStrategyOrderBtn" data-name="${name.replace(/"/g,'&quot;')}" data-dir="down" ${idx===names.length-1?'disabled':''} title="아래로" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:9px; padding:0 4px; line-height:1.3;">▼</button>
+      </div>
       <button type="button" class="btn btnGhost mvStrategyLoadBtn" data-name="${name.replace(/"/g,'&quot;')}" style="padding:7px 10px; font-size:12.5px;">${name}</button>
       <button type="button" class="mvStrategyRenameBtn" data-name="${name.replace(/"/g,'&quot;')}" title="이름 변경" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:4px 6px;">✎</button>
       <button type="button" class="mvStrategyDeleteBtn" data-name="${name.replace(/"/g,'&quot;')}" title="삭제" style="background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px; padding:4px 8px;">×</button>
     </div>
   `).join('');
+  el.querySelectorAll('.mvStrategyOrderBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=> moveMvStrategy(btn.dataset.name, btn.dataset.dir==='up' ? -1 : 1));
+  });
   el.querySelectorAll('.mvStrategyLoadBtn').forEach(btn=>{
     btn.addEventListener('click', ()=> applyMvStrategySnapshot(btn.dataset.name));
   });
@@ -3317,6 +3358,10 @@ function renderMvStrategyPresetList(){
       delete mvStrategyPresets[oldName];
       deletedMvStrategyNames.add(oldName);
       savePresetOverrides([]);
+      // 순서 기록에도 이름을 그대로 옮겨줌 - 안 그러면 이름 바뀐 순간 "새 이름"으로 취급돼서 맨 뒤로 밀림.
+      const order = loadMvStrategyOrder();
+      const orderIdx = order.indexOf(oldName);
+      if(orderIdx !== -1){ order[orderIdx] = newName; saveMvStrategyOrder(order); }
       renderMvStrategyPresetList();
     });
   });
@@ -3330,6 +3375,7 @@ function renderMvStrategyPresetList(){
       deletedMvStrategyNames.add(btn.dataset.name);
       delete mvStrategyPresets[btn.dataset.name];
       savePresetOverrides([]);
+      saveMvStrategyOrder(loadMvStrategyOrder().filter(n => n !== btn.dataset.name));
       renderMvStrategyPresetList();
     });
   });
@@ -4257,22 +4303,60 @@ document.getElementById('penUseUsEtfOn').addEventListener('change', ()=>{
   renderPenStockParamsTable();
 });
 
+// 저장된 전략(탭3) 화면 표시 순서 - 탭2의 MV_STRATEGY_ORDER_KEY와 동일한 패턴, 이 기기에만 저장.
+const PEN_STRATEGY_ORDER_KEY = 'btApp_penStrategyOrder_v1';
+function loadPenStrategyOrder(){
+  try{ return JSON.parse(localStorage.getItem(PEN_STRATEGY_ORDER_KEY) || '[]'); }catch(e){ return []; }
+}
+function savePenStrategyOrder(names){
+  try{ localStorage.setItem(PEN_STRATEGY_ORDER_KEY, JSON.stringify(names)); }catch(e){}
+}
+function applyPenStrategyOrder(names){
+  const order = loadPenStrategyOrder();
+  const orderIndex = new Map(order.map((n,i)=>[n,i]));
+  return names.slice().sort((a,b)=>{
+    const ai = orderIndex.has(a) ? orderIndex.get(a) : 10000;
+    const bi = orderIndex.has(b) ? orderIndex.get(b) : 10000;
+    return ai !== bi ? ai-bi : a.localeCompare(b);
+  });
+}
+function movePenStrategy(name, dir){
+  const ordered = applyPenStrategyOrder(Object.keys(penStrategyPresets));
+  const idx = ordered.indexOf(name);
+  const swapIdx = idx+dir;
+  if(idx<0 || swapIdx<0 || swapIdx>=ordered.length) return;
+  [ordered[idx], ordered[swapIdx]] = [ordered[swapIdx], ordered[idx]];
+  savePenStrategyOrder(ordered);
+  renderPenStrategyPresetList();
+}
+async function autoApplyFirstPenStrategy(){
+  const names = applyPenStrategyOrder(Object.keys(penStrategyPresets));
+  if(names.length > 0) await applyPenStrategySnapshot(names[0]);
+}
+
 // 저장된 전략 - 종목 선택 + 종목별 비중 + 총투자금/리밸런싱간격/수수료를 통째로 이름 붙여 저장.
 function renderPenStrategyPresetList(){
   const el = document.getElementById('penStrategyPresetList');
   if(!el) return;
-  const names = Object.keys(penStrategyPresets).sort();
+  const names = applyPenStrategyOrder(Object.keys(penStrategyPresets));
   if(names.length === 0){
     el.innerHTML = '<span style="font-size:12.5px; color:var(--text-dim);">저장된 전략이 아직 없습니다.</span>';
     return;
   }
-  el.innerHTML = names.map(name => `
-    <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 12px;">
+  el.innerHTML = names.map((name, idx) => `
+    <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 6px;">
+      <div style="display:flex; flex-direction:column; gap:0;">
+        <button type="button" class="penStrategyOrderBtn" data-name="${name.replace(/"/g,'&quot;')}" data-dir="up" ${idx===0?'disabled':''} title="위로" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:9px; padding:0 4px; line-height:1.3;">▲</button>
+        <button type="button" class="penStrategyOrderBtn" data-name="${name.replace(/"/g,'&quot;')}" data-dir="down" ${idx===names.length-1?'disabled':''} title="아래로" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:9px; padding:0 4px; line-height:1.3;">▼</button>
+      </div>
       <button type="button" class="btn btnGhost penStrategyLoadBtn" data-name="${name.replace(/"/g,'&quot;')}" style="padding:7px 10px; font-size:12.5px;">${name}</button>
       <button type="button" class="penStrategyRenameBtn" data-name="${name.replace(/"/g,'&quot;')}" title="이름 변경" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:4px 6px;">✎</button>
       <button type="button" class="penStrategyDeleteBtn" data-name="${name.replace(/"/g,'&quot;')}" title="삭제" style="background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px; padding:4px 8px;">×</button>
     </div>
   `).join('');
+  el.querySelectorAll('.penStrategyOrderBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=> movePenStrategy(btn.dataset.name, btn.dataset.dir==='up' ? -1 : 1));
+  });
   el.querySelectorAll('.penStrategyLoadBtn').forEach(btn=>{
     btn.addEventListener('click', ()=> applyPenStrategySnapshot(btn.dataset.name));
   });
@@ -4288,6 +4372,9 @@ function renderPenStrategyPresetList(){
       delete penStrategyPresets[oldName];
       deletedPenStrategyNames.add(oldName);
       savePresetOverrides([]);
+      const order = loadPenStrategyOrder();
+      const orderIdx = order.indexOf(oldName);
+      if(orderIdx !== -1){ order[orderIdx] = newName; savePenStrategyOrder(order); }
       renderPenStrategyPresetList();
     });
   });
@@ -4299,6 +4386,7 @@ function renderPenStrategyPresetList(){
       deletedPenStrategyNames.add(btn.dataset.name);
       delete penStrategyPresets[btn.dataset.name];
       savePresetOverrides([]);
+      savePenStrategyOrder(loadPenStrategyOrder().filter(n => n !== btn.dataset.name));
       renderPenStrategyPresetList();
     });
   });
@@ -4920,12 +5008,16 @@ document.getElementById('penPeriodStart').addEventListener('change', runPenStrat
 document.getElementById('penPeriodEnd').addEventListener('change', runPenStrategy);
 
 // ---------- 탭 전환 ----------
+// 탭2(여러종목투자)/탭3(개인연금 보유전략)로 전환할 때마다, 저장된 전략이 있으면 맨 앞(현재 순서 기준)
+// 전략을 자동으로 불러옴 - 매번 목록에서 클릭해서 불러올 필요 없게.
 document.querySelectorAll('.tabBtn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tabBtn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tabPanel').forEach(p => p.style.display = 'none');
     btn.classList.add('active');
     document.getElementById(btn.dataset.tab).style.display = '';
+    if(btn.dataset.tab === 'tab1b') autoApplyFirstMvStrategy();
+    else if(btn.dataset.tab === 'tabPension') autoApplyFirstPenStrategy();
   });
 });
 
