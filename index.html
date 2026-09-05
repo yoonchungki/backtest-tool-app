@@ -3298,11 +3298,27 @@ function renderMvStrategyPresetList(){
   el.innerHTML = names.map(name => `
     <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 12px;">
       <button type="button" class="btn btnGhost mvStrategyLoadBtn" data-name="${name.replace(/"/g,'&quot;')}" style="padding:7px 10px; font-size:12.5px;">${name}</button>
+      <button type="button" class="mvStrategyRenameBtn" data-name="${name.replace(/"/g,'&quot;')}" title="이름 변경" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:4px 6px;">✎</button>
       <button type="button" class="mvStrategyDeleteBtn" data-name="${name.replace(/"/g,'&quot;')}" title="삭제" style="background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px; padding:4px 8px;">×</button>
     </div>
   `).join('');
   el.querySelectorAll('.mvStrategyLoadBtn').forEach(btn=>{
     btn.addEventListener('click', ()=> applyMvStrategySnapshot(btn.dataset.name));
+  });
+  el.querySelectorAll('.mvStrategyRenameBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const oldName = btn.dataset.name;
+      const newName = (prompt('새 이름을 입력하세요', oldName) || '').trim();
+      if(!newName || newName === oldName) return;
+      if(mvStrategyPresets[newName] && !confirm(`"${newName}" 이름이 이미 있습니다. 덮어쓸까요?`)) return;
+      // 삭제와 동일한 순서(sync 먼저) - 이름변경도 결국 "새 이름으로 추가 + 옛 이름 삭제"라 같은 tombstone 함정이 적용됨.
+      try{ await syncPresetOverridesFromServer(); }catch(e){}
+      mvStrategyPresets[newName] = mvStrategyPresets[oldName];
+      delete mvStrategyPresets[oldName];
+      deletedMvStrategyNames.add(oldName);
+      savePresetOverrides([]);
+      renderMvStrategyPresetList();
+    });
   });
   el.querySelectorAll('.mvStrategyDeleteBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -4253,11 +4269,27 @@ function renderPenStrategyPresetList(){
   el.innerHTML = names.map(name => `
     <div style="display:flex; align-items:center; gap:2px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:2px 4px 2px 12px;">
       <button type="button" class="btn btnGhost penStrategyLoadBtn" data-name="${name.replace(/"/g,'&quot;')}" style="padding:7px 10px; font-size:12.5px;">${name}</button>
+      <button type="button" class="penStrategyRenameBtn" data-name="${name.replace(/"/g,'&quot;')}" title="이름 변경" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:4px 6px;">✎</button>
       <button type="button" class="penStrategyDeleteBtn" data-name="${name.replace(/"/g,'&quot;')}" title="삭제" style="background:none; border:none; color:var(--bad); cursor:pointer; font-size:15px; padding:4px 8px;">×</button>
     </div>
   `).join('');
   el.querySelectorAll('.penStrategyLoadBtn').forEach(btn=>{
     btn.addEventListener('click', ()=> applyPenStrategySnapshot(btn.dataset.name));
+  });
+  el.querySelectorAll('.penStrategyRenameBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const oldName = btn.dataset.name;
+      const newName = (prompt('새 이름을 입력하세요', oldName) || '').trim();
+      if(!newName || newName === oldName) return;
+      if(penStrategyPresets[newName] && !confirm(`"${newName}" 이름이 이미 있습니다. 덮어쓸까요?`)) return;
+      // 탭2와 동일한 순서(sync 먼저) - 위 mvStrategyRenameBtn 주석 참고.
+      try{ await syncPresetOverridesFromServer(); }catch(e){}
+      penStrategyPresets[newName] = penStrategyPresets[oldName];
+      delete penStrategyPresets[oldName];
+      deletedPenStrategyNames.add(oldName);
+      savePresetOverrides([]);
+      renderPenStrategyPresetList();
+    });
   });
   el.querySelectorAll('.penStrategyDeleteBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
