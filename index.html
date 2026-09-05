@@ -3303,9 +3303,11 @@ function renderMvStrategyPresetList(){
   el.querySelectorAll('.mvStrategyDeleteBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm(`"${btn.dataset.name}" 전략을 삭제할까요?`)) return;
-      deletedMvStrategyNames.add(btn.dataset.name);
-      delete mvStrategyPresets[btn.dataset.name];
+      // 반드시 sync를 먼저 하고 그다음에 tombstone 추가/삭제해야 함(2026-09-05 수정) - 순서가 반대였을 땐
+      // sync 도중 서버가 아직 모르는 이 삭제를 "다른 기기의 오래된 tombstone"으로 착각해서
+      // applyOverrideData()의 화해 로직이 되살려버렸음(위 "1." tombstone 패턴과 동일한 함정).
       try{ await syncPresetOverridesFromServer(); }catch(e){}
+      deletedMvStrategyNames.add(btn.dataset.name);
       delete mvStrategyPresets[btn.dataset.name];
       savePresetOverrides([]);
       renderMvStrategyPresetList();
@@ -4256,9 +4258,9 @@ function renderPenStrategyPresetList(){
   el.querySelectorAll('.penStrategyDeleteBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm(`"${btn.dataset.name}" 전략을 삭제할까요?`)) return;
-      deletedPenStrategyNames.add(btn.dataset.name);
-      delete penStrategyPresets[btn.dataset.name];
+      // 탭2와 동일한 순서 수정(위 mvStrategyDeleteBtn 주석 참고) - sync를 먼저 해야 함.
       try{ await syncPresetOverridesFromServer(); }catch(e){}
+      deletedPenStrategyNames.add(btn.dataset.name);
       delete penStrategyPresets[btn.dataset.name];
       savePresetOverrides([]);
       renderPenStrategyPresetList();
