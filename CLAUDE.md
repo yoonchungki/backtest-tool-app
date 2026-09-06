@@ -131,6 +131,17 @@
 - **종목 선택 체크리스트에 매핑 표시**: `renderPenPresetChecklist()`에서 `PEN_US_ETF_MAP`에 있는 종목마다 체크박스 아래에 작은 글씨로 "↳ 추종 미국ETF: QQQ" 식으로 표시(매핑 없는 종목은 표시 없음) — 사용자가 "미국ETF비교"를 켜기 전에도 어떤 종목이 환산 대상인지 미리 알 수 있게 함.
 - **검증**: `fetch`를 몽키패치해서 `/api/usetf` 응답을 목업으로 대체 후 `updateUsEtfAndFxData()` 직접 호출 — 마지막 저장일 다음날부터(타임존 버그 수정 후 정확한 날짜로) 오늘까지만 요청하는지, 병합 후 배열 길이/마지막 날짜가 맞는지, `localStorage` 저장 후 새로고침해도 유지되는지, 이미 최신이면 네트워크 호출 자체가 생략되는지 확인. `api/usetf.py`는 `python -m py_compile`로 문법 검증(로컬 Python `ssl` 모듈이 깨져있어(위 "9." 참고) `requests`로 실제 야후 호출까지는 로컬에서 테스트 못 함 — Vercel 배포 환경에서는 `api/history.py`가 이미 같은 `requests` 패턴으로 정상 동작 중이라 문제없을 것으로 판단).
 
+### 12. 매매신호 앱(stock-signal-app) 연동 — 저장된 전략을 실전 KIS 계좌 신호에 바로 적용 (2026-09-06)
+탭2/탭3에서 백테스트로 검증한 전략을 매번 손으로 옮겨 적지 않고, "가장 앞 저장된 전략"의 종목/설정을 stock-signal-app(실전 KIS 계좌 연동, 자매 프로젝트)의 전략1(한투)/전략2(연금) 라이브 신호 계산에 바로 반영할 수 있게 함. **자동 반영이 아니라 버튼을 눌러야만 반영됨** — 사용자에게 "자동 즉시 반영 vs 버튼으로 반영" 두 방식을 제안했고, 실전 계좌 설정이라 명시적 버튼 방식을 선택함.
+
+- **연동 설정(`SIGNAL_APP_URL_KEY`/`SIGNAL_APP_KEY_KEY`, localStorage)**: stock-signal-app의 `/api/sync_config` 주소 + 접근키를 이 기기에 한 번만 저장(탭2/탭3 공통, `promptSignalAppSettings()`). 최초 클릭 시 `prompt()`로 물어보고, 이후엔 저장된 값을 재사용 — 탭2/탭3 각각의 "⚙" 버튼으로 언제든 다시 설정 가능.
+- **`pushToSignalApp(target, stocks, sourceName, noteEl, btn)`**: 탭2("매매신호 앱 전략1(한투)에 적용")/탭3("...전략2(연금)에 적용") 버튼이 공유하는 함수. **전송 전 항상 `confirm()`으로 확인**("실제 KIS 실전계좌 신호 계산에 쓰이는 값이 바뀝니다") — 실수로 잘못 누르는 걸 막기 위함. `stock-signal-app-synced-config.json`(Vercel Blob, stock-signal-app 쪽)에 `POST {target, stocks, source_name, synced_at}`로 저장됨.
+- **전달 대상은 "가장 앞 저장된 전략"**: `applyMvStrategyOrder(Object.keys(mvStrategyPresets))[0]`/`applyPenStrategyOrder(...)[0]` — 화면에 지금 체크된 것(저장 안 한 실험적 변경 포함)이 아니라, 명시적으로 저장된 스냅샷(`mvStrategyPresets[frontName]`/`penStrategyPresets[frontName]`)에서 값을 읽음. 순서를 바꾸면(▲▼) 다음번 전송 대상도 그에 따라 바뀜.
+- **탭2(k값) 매핑**: `mvStockParams` 형태(`kBuy`/`kSell`/`kBuyBelow`/`kSellBelow`)를 stock-signal-app의 `STOCKS` 형태(`k_buy`/`k_sell`/`k_buy_below`/`k_sell_below`/`ma_period`)로 변환. **이평필터(`maFilterOn`)가 꺼져있으면 `k_buy_below`/`k_sell_below`를 `null`로 보냄** — 안 그러면 이평필터를 꺼둔 전략인데도 저쪽에서 이평 국면 구분이 계속 켜진 것처럼 동작하게 됨(저쪽의 `use_ma_filter = k_buy_below is not None and k_sell_below is not None` 조건과 맞춤). 슬리피지 등 탭2에만 있는 다른 설정은 전송 대상에서 제외(저쪽엔 대응 개념이 없음).
+- **탭3(비중) 매핑**: `penStockParams` 형태(`{weight}`)를 그대로 `STOCKS2` 형태(`{stock, weight}`)로 옮김. **규칙A(역변동성)/규칙B(DD컷) 체크박스 상태는 전송 안 함** — 그 두 규칙은 stock-signal-app 쪽에 이미 구현된 자체 로직이라(항상 적용됨), 여기선 고정비중만 넘기면 됨.
+- **stock-signal-app 쪽 반영**: `api/run.py`/`api/order_resv.py`가 매 요청마다 이 Blob을 읽어서(`load_synced_config()`/`resolve_stocks()`) 값이 있으면 하드코딩 기본값 대신 그걸 쓰도록 그쪽에서 같이 수정함 — 자세한 내용은 stock-signal-app repo의 CLAUDE.md "backtest-tool-app 연동" 참고.
+- **검증**: 목업 `fetch`+`confirm`으로 ①탭2 정상 케이스(이평필터 켜짐, 페이로드 필드명·값 확인) ②이평필터 꺼진 케이스(`k_buy_below`/`k_sell_below`가 `null`로 나가는지) ③탭3 정상 케이스 ④`confirm()` 취소 시 `fetch` 자체가 안 나가는지 네 가지 확인. Vercel Blob 실제 저장/읽기(stock-signal-app 쪽)는 로컬에서 검증 못 함 — 배포 후 실제 버튼으로 확인 필요, `BLOB_READ_WRITE_TOKEN`이 그 프로젝트에 아직 없으면 실패함(stock-signal-app CLAUDE.md 참고).
+
 ## 주요 변경 이력 (최근 → 과거, 상세 배경은 `git log`로 각 커밋 메시지 확인)
 - `cec8208` 탭3에 "미국ETF비교" 체크박스 추가(위 "9." 참고) — 국내 상장 기간 짧은 종목을 추종 미국 ETF×USD/KRW 환율 환산값으로 대체해서 훨씬 긴 기간 백테스트 가능. `US_ETF_DATA`/`USD_KRW_DATA`/`PEN_US_ETF_MAP` 새 상수 추가(파일 크기 약 1MB 증가, `PRESETS`와 분리 관리).
 - `cb23275` 탭3(개인연금 보유전략) 후속 수정 2건(위 "8." 하단 참고) — ①종목 선택 시 비중 자동 균등분배(100/N%), ②리밸런싱 간격을 탭1 k값처럼 최소/최대/step 그리드서치로 변경(`lastPenResult` 단수 → `lastPenResults` 배열, 탭1의 다중조합 비교 UI 패턴을 `pen` 접두어로 복제). 겸사겸사 조합별 거래횟수 항상 0으로 나오던 버그, 기준(보유전략) 선택 시 종목별요약 빈 표로 나오던 버그도 수정.
