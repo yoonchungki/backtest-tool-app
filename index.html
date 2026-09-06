@@ -340,6 +340,11 @@ canvas{max-width:100%;}
         <button class="btn" id="mvStrategyPresetSaveBtn">현재 설정 저장</button>
       </div>
       <div class="comboNote" id="mvStrategyPresetNote" style="margin-bottom:16px;"></div>
+      <div class="btnRow" style="margin-bottom:6px; flex-wrap:wrap;">
+        <button class="btn btnGhost" id="mvSyncToSignalAppBtn" style="flex:1; min-width:200px;">▶ 매매신호 앱 전략1(한투)에 적용</button>
+        <button class="btn btnGhost" id="mvSyncSettingsBtn" title="매매신호 앱 연동 설정 변경" style="flex:0 0 auto; padding:10px 14px;">⚙</button>
+      </div>
+      <div class="comboNote" id="mvSyncToSignalAppNote" style="margin-bottom:16px;"></div>
 
       <div class="panelTitle" style="margin-bottom:10px;">투자할 종목 선택 (내장 데이터셋)</div>
       <div id="mvPresetChecklist" class="rangeGrid" style="margin-bottom:16px;"></div>
@@ -448,6 +453,11 @@ canvas{max-width:100%;}
         <button class="btn" id="penStrategyPresetSaveBtn">현재 설정 저장</button>
       </div>
       <div class="comboNote" id="penStrategyPresetNote" style="margin-bottom:16px;"></div>
+      <div class="btnRow" style="margin-bottom:6px; flex-wrap:wrap;">
+        <button class="btn btnGhost" id="penSyncToSignalAppBtn" style="flex:1; min-width:200px;">▶ 매매신호 앱 전략2(연금)에 적용</button>
+        <button class="btn btnGhost" id="penSyncSettingsBtn" title="매매신호 앱 연동 설정 변경" style="flex:0 0 auto; padding:10px 14px;">⚙</button>
+      </div>
+      <div class="comboNote" id="penSyncToSignalAppNote" style="margin-bottom:16px;"></div>
 
       <div class="panelTitle" style="margin-bottom:10px;">보유할 종목 선택 (내장 데이터셋)</div>
       <div id="penPresetChecklist" class="rangeGrid" style="margin-bottom:16px;"></div>
@@ -3284,6 +3294,64 @@ function renderMvPresetChecklist(){
   });
 }
 
+// ---------- 매매신호 앱(stock-signal-app) 연동 (2026-09-06 추가) ----------
+// 탭2/탭3의 "가장 앞 전략"을 매매신호 앱(실전 KIS 계좌 연동)의 전략1(한투)/전략2(연금) 설정에
+// 밀어넣는 기능. 자동 반영이 아니라 버튼을 눌러야만 반영됨(사용자가 명시적으로 선택 - 라이브
+// 트레이딩 설정이라 의도치 않은 변경을 막기 위함). 연동 주소/접근키는 이 기기 localStorage에만
+// 저장(탭2/탭3이 공유해서 씀, 최초 1회만 물어보고 이후엔 재사용).
+const SIGNAL_APP_URL_KEY = 'btApp_signalAppSyncUrl';
+const SIGNAL_APP_KEY_KEY = 'btApp_signalAppSyncKey';
+function getSignalAppSettings(){
+  return {
+    url: localStorage.getItem(SIGNAL_APP_URL_KEY) || '',
+    key: localStorage.getItem(SIGNAL_APP_KEY_KEY) || '',
+  };
+}
+function promptSignalAppSettings(){
+  const cur = getSignalAppSettings();
+  const url = prompt('매매신호 앱의 /api/sync_config 주소를 입력하세요\n예: https://stock-signal-app-self.vercel.app/api/sync_config', cur.url || 'https://stock-signal-app-self.vercel.app/api/sync_config');
+  if(url === null) return null; // 취소
+  const key = prompt('매매신호 앱 접근키(APP_ACCESS_KEY) - 설정 안 했으면 비워두세요', cur.key || '');
+  if(key === null) return null;
+  localStorage.setItem(SIGNAL_APP_URL_KEY, url.trim());
+  localStorage.setItem(SIGNAL_APP_KEY_KEY, key.trim());
+  return getSignalAppSettings();
+}
+function ensureSignalAppSettings(){
+  const cur = getSignalAppSettings();
+  if(cur.url) return cur;
+  return promptSignalAppSettings();
+}
+
+// stocks: [{stock, ...}] / target: 'strategy1'|'strategy2' / sourceName: 표시용(어느 저장된 전략에서 왔는지)
+async function pushToSignalApp(target, stocks, sourceName, noteEl, btn){
+  const settings = ensureSignalAppSettings();
+  if(!settings || !settings.url) return;
+  const label = target === 'strategy1' ? '전략1(한투)' : '전략2(연금)';
+  if(!confirm(`"${sourceName}"의 종목/설정을 매매신호 앱 ${label}에 적용합니다.\n실제 KIS 실전계좌 신호 계산에 쓰이는 값이 바뀝니다. 계속할까요?`)) return;
+
+  btn.disabled = true;
+  noteEl.textContent = '적용 중...';
+  noteEl.className = 'comboNote';
+  try{
+    const params = new URLSearchParams();
+    if(settings.key) params.set('key', settings.key);
+    const url = settings.url + (params.toString() ? '?' + params.toString() : '');
+    const resp = await fetch(url, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ target, stocks, source_name: sourceName, synced_at: new Date().toISOString() }),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if(!resp.ok || data.error) throw new Error(data.error || `요청 실패 (${resp.status})`);
+    noteEl.textContent = `"${sourceName}" → 매매신호 앱 ${label}에 적용 완료 (${stocks.length}종목)`;
+    noteEl.className = 'comboNote';
+  }catch(err){
+    noteEl.textContent = '적용 실패: ' + err.message;
+    noteEl.className = 'comboNote warn';
+  }
+  btn.disabled = false;
+}
+
 // 저장된 전략 - 종목 선택 + 종목별 k값/비중/초기투자금 + 리밸런싱/이평/정수주 설정을 통째로 이름 붙여 저장.
 // 매번 8종목씩 다시 세팅하는 게 번거롭다는 요청으로 추가함. 업로드한 엑셀 종목은 세션이 지나면 파일이
 // 다시 없어서 재선택이 안 되므로 저장 대상에서 제외(내장 데이터셋 코드만 저장).
@@ -3449,6 +3517,32 @@ document.getElementById('mvStrategyPresetSaveBtn').addEventListener('click', asy
   nameInput.value = '';
   noteEl.textContent = `"${name}" 저장됨 (${codes.length}종목) · 브라우저에 저장됨(다음에 열어도 유지)`;
   noteEl.className = 'comboNote ok';
+});
+
+document.getElementById('mvSyncSettingsBtn').addEventListener('click', promptSignalAppSettings);
+document.getElementById('mvSyncToSignalAppBtn').addEventListener('click', async ()=>{
+  const noteEl = document.getElementById('mvSyncToSignalAppNote');
+  const names = applyMvStrategyOrder(Object.keys(mvStrategyPresets));
+  if(names.length === 0){ noteEl.textContent = '저장된 전략이 없습니다.'; noteEl.className = 'comboNote warn'; return; }
+  const frontName = names[0];
+  const snap = mvStrategyPresets[frontName];
+  // 탭2의 종목별 k값(mvStockParams 형태: kBuy/kSell/kBuyBelow/kSellBelow)을 매매신호 앱의
+  // STOCKS 형태(k_buy/k_sell/k_buy_below/k_sell_below/ma_period)로 매핑함. 이평필터(maFilterOn)가
+  // 꺼져있으면 k_buy_below/k_sell_below를 null로 보내서(매매신호 앱 쪽 use_ma_filter 조건과 일치),
+  // 이평 국면 구분 없이 항상 kBuy/kSell 하나만 쓰도록 함.
+  const stocks = (snap.codes || []).map(code => {
+    const p = (snap.params || {})[code] || {};
+    return {
+      stock: code,
+      k_buy: p.kBuy ?? 0,
+      k_sell: p.kSell ?? 0,
+      k_buy_below: snap.maFilterOn ? (p.kBuyBelow ?? null) : null,
+      k_sell_below: snap.maFilterOn ? (p.kSellBelow ?? null) : null,
+      ma_period: snap.maFilterOn ? (parseInt(snap.maPeriod) || 20) : 20,
+    };
+  });
+  if(stocks.length === 0){ noteEl.textContent = `"${frontName}"에 종목이 없습니다.`; noteEl.className = 'comboNote warn'; return; }
+  await pushToSignalApp('strategy1', stocks, frontName, noteEl, document.getElementById('mvSyncToSignalAppBtn'));
 });
 
 function getSelectedMvDatasets(){
@@ -4458,6 +4552,23 @@ document.getElementById('penStrategyPresetSaveBtn').addEventListener('click', as
   nameInput.value = '';
   noteEl.textContent = `"${name}" 저장됨 (${codes.length}종목) · 브라우저에 저장됨(다음에 열어도 유지)`;
   noteEl.className = 'comboNote ok';
+});
+
+document.getElementById('penSyncSettingsBtn').addEventListener('click', promptSignalAppSettings);
+document.getElementById('penSyncToSignalAppBtn').addEventListener('click', async ()=>{
+  const noteEl = document.getElementById('penSyncToSignalAppNote');
+  const names = applyPenStrategyOrder(Object.keys(penStrategyPresets));
+  if(names.length === 0){ noteEl.textContent = '저장된 전략이 없습니다.'; noteEl.className = 'comboNote warn'; return; }
+  const frontName = names[0];
+  const snap = penStrategyPresets[frontName];
+  // 탭3의 종목별 비중(penStockParams 형태: {weight})을 매매신호 앱의 STOCKS2 형태(weight)로 매핑.
+  // 규칙A(역변동성)/규칙B(DD컷)는 매매신호 앱 자체 로직이라 여기서 넘길 값이 없음(고정비중만 전달).
+  const stocks = (snap.codes || []).map(code => ({
+    stock: code,
+    weight: (((snap.weights || {})[code] || {}).weight) ?? 0,
+  }));
+  if(stocks.length === 0){ noteEl.textContent = `"${frontName}"에 종목이 없습니다.`; noteEl.className = 'comboNote warn'; return; }
+  await pushToSignalApp('strategy2', stocks, frontName, noteEl, document.getElementById('penSyncToSignalAppBtn'));
 });
 
 let penInitCap = 10000000;
