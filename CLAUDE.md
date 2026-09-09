@@ -136,6 +136,16 @@
 
 **이 repo가 pull을 지원하기 위해 갖고 있어야 하는 건 딱 하나 — `GET /api/presets`가 이미 인증 없이 `mvStrategyPresets`/`penStrategyPresets`를 전부 돌려주고 있다는 것**(원래 여러 기기 동기화용으로 만들어둔 것, 위 "1." 참고) — stock-signal-app이 이 엔드포인트를 직접 GET해서 저장된 전략 이름 목록을 가져가고, 사용자가 그중 하나를 그쪽 화면에서 고름. **이 repo 쪽엔 추가로 만들 게 없음** — 이미 있는 공개 조회 엔드포인트를 상대방이 읽어가는 것뿐이라, 이 repo는 stock-signal-app의 존재를 몰라도 됨(단방향 의존성: stock-signal-app → 이 repo, 반대 방향 없음). 자세한 흐름은 stock-signal-app repo의 CLAUDE.md "backtest-tool-app 연동" 참고.
 
+### 13. "전체 종목 최신화" 자동 실행 (Vercel Cron, 평일 15:40 KST) — `api/cron_update_all.py`
+기존 "전체 종목 최신화" 버튼(index.html)은 전부 브라우저 JS라 사람이 직접 눌러야만 실행됨. 매일 장 마감 후 자동으로 돌게 해달라는 요청으로, 같은 일(가격 데이터 증분 갱신 + 시가총액 갱신)을 하는 서버 함수 `api/cron_update_all.py`를 새로 만들고 `vercel.json`의 `crons`에 등록함(`"schedule": "40 6 * * 1-5"` — UTC 06:40 = KST 15:40, 월~금만).
+
+- **"미국ETF비교" 데이터(`api/usetf.py`)는 자동화 대상에서 뺐음** — index.html 주석에 있듯 그 데이터는 애초에 **기기별 localStorage에만** 저장되는 보조 캐시라(위 "9."/"11." 참고), 서버에서 갱신해봤자 각 브라우저에 반영될 방법이 없음. 그건 여전히 사람이 버튼을 눌러야 갱신됨.
+- **새 종목(가격 데이터가 아예 없는 코드)은 건너뜀** — 첫 백필은 수년치라 시간 예산을 넘기기 쉽고, 애초에 새 종목 추가는 사용자가 "새 종목 추가"로 직접 하는 흐름이라 자동화 범위 밖(응답의 `priceNoData`에 나열됨).
+- **KIS API 호출 로직은 `api/history.py`와 별개로 이 파일에 통째로 복붙**(이 프로젝트의 "Vercel Python 함수끼리 서로 import 안 함" 관례 유지). `BASE_PRESET_INFO`(31개 기본 종목 code/name)도 index.html의 `PRESET_INFO_LIST`/`BASE_PRESET_CODES`를 그대로 복사해둔 것 — **index.html에서 기본 내장 종목을 추가/삭제하면 `api/cron_update_all.py`의 `BASE_PRESET_INFO`도 같이 고쳐야 함**(자동 동기화 없음, 수동 관리).
+- **시간 예산**: Vercel 함수 기본 실행시간 제한(과거엔 10초였음, 위 "usetf.py" 주석 참고)을 이 함수만 `vercel.json`의 `"config": {"maxDuration": 60}`로 60초로 늘림(legacy `builds` 포맷에서도 build entry별 `config.maxDuration`은 지원됨). Cron은 Vercel Hobby 플랜에서 **하루 1번만** 허용되기 때문에(여러 번 나눠 재호출하는 체이닝 불가), 시간 예산을 넘기면 처리하다 만 상태를 그대로 Blob에 저장하고 조용히 끝냄(`priceTimedOut`/`capTimedOut`에 나열) — 못 끝낸 나머지는 다음날 "아직 오늘자가 아닌 종목"으로 자연스럽게 다시 잡혀서 이어짐. 하루 정도 갱신이 늦어지는 것뿐이라 개인용 앱에서 문제없다고 보고, 재귀/체이닝처럼 복잡하고 깨지기 쉬운 방식은 일부러 안 씀.
+- **인증**: Vercel이 `CRON_SECRET` 환경변수를 보고 cron 트리거 요청에 자동으로 `Authorization: Bearer <CRON_SECRET>` 헤더를 붙여줌 - 이 값이 프로젝트에 없으면 이 함수는 무조건 401을 돌려줌(기본값이 "허용"이 아니라 "거부"). **Vercel 프로젝트 Settings → Environment Variables에 `CRON_SECRET`을 값 아무거나(랜덤 문자열)로 추가해야 실제로 동작함** — 안 하면 매일 401만 찍히고 아무 갱신도 안 일어남.
+- **검증**: `merge_price_data()`(날짜 기준 병합, index.html의 `mergeStockData()`와 동일 동작), `run_update()` 전체 흐름(이미 최신인 코드 skip / 하루 뒤처진 코드만 fetch / 데이터 없는 코드 skip / 삭제된 코드 완전 제외 / market cap 배치 / Blob 저장)을 `vercel_blob`·KIS 호출을 목업으로 대체해서 단위 테스트함, 데드라인을 과거로 줘서 "시간 초과해도 크래시 없이 부분완료로 끝나는지"도 확인함. **실제 Vercel cron 트리거 자체는 로컬에서 재현 불가** — 배포 후 Vercel 대시보드 Settings → Cron Jobs에서 실행 로그를 봐야 정상 동작(특히 60초 안에 다 끝나는지, `maxDuration` 설정이 실제로 반영됐는지)을 확인할 수 있음.
+
 ## 주요 변경 이력 (최근 → 과거, 상세 배경은 `git log`로 각 커밋 메시지 확인)
 - `cec8208` 탭3에 "미국ETF비교" 체크박스 추가(위 "9." 참고) — 국내 상장 기간 짧은 종목을 추종 미국 ETF×USD/KRW 환율 환산값으로 대체해서 훨씬 긴 기간 백테스트 가능. `US_ETF_DATA`/`USD_KRW_DATA`/`PEN_US_ETF_MAP` 새 상수 추가(파일 크기 약 1MB 증가, `PRESETS`와 분리 관리).
 - `cb23275` 탭3(개인연금 보유전략) 후속 수정 2건(위 "8." 하단 참고) — ①종목 선택 시 비중 자동 균등분배(100/N%), ②리밸런싱 간격을 탭1 k값처럼 최소/최대/step 그리드서치로 변경(`lastPenResult` 단수 → `lastPenResults` 배열, 탭1의 다중조합 비교 UI 패턴을 `pen` 접두어로 복제). 겸사겸사 조합별 거래횟수 항상 0으로 나오던 버그, 기준(보유전략) 선택 시 종목별요약 빈 표로 나오던 버그도 수정.
