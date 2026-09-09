@@ -3,6 +3,7 @@
     { "src": "api/history.py", "use": "@vercel/python" },
     { "src": "api/presets.py", "use": "@vercel/python" },
     { "src": "api/usetf.py", "use": "@vercel/python" },
+    { "src": "api/cron_update_all.py", "use": "@vercel/python", "config": { "maxDuration": 60 } },
     { "src": "index.html", "use": "@vercel/static" },
     { "src": "manifest.json", "use": "@vercel/static" }
   ],
@@ -10,7 +11,11 @@
     { "src": "/api/history", "dest": "api/history.py" },
     { "src": "/api/presets", "dest": "api/presets.py" },
     { "src": "/api/usetf", "dest": "api/usetf.py" },
+    { "src": "/api/cron_update_all", "dest": "api/cron_update_all.py" },
     { "src": "/manifest.json", "dest": "manifest.json" },
     { "src": "/(.*)", "dest": "index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron_update_all", "schedule": "40 6 * * 1-5" }
   ]
 }
