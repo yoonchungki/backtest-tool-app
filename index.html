@@ -3555,15 +3555,17 @@ function renderMvStockParamsTable(){
   if(datasets.length === 0){ el.innerHTML = ''; return; }
   const maOn = document.getElementById('mvMaFilterOn').checked;
   datasets.forEach(ds => {
-    if(!mvStockParams[ds.mvKey]) mvStockParams[ds.mvKey] = { kBuy: 0.5, kSell: 0.5, kBuyBelow: 0.5, kSellBelow: 0.5, slipPct: 0 };
+    if(!mvStockParams[ds.mvKey]) mvStockParams[ds.mvKey] = { kBuy: 0.5, kSell: 0.5, kBuyBelow: 0.5, kSellBelow: 0.5, slipPct: 0, weight: 1 };
     if(mvStockParams[ds.mvKey].kBuyBelow === undefined){ mvStockParams[ds.mvKey].kBuyBelow = mvStockParams[ds.mvKey].kBuy; mvStockParams[ds.mvKey].kSellBelow = mvStockParams[ds.mvKey].kSell; }
     if(mvStockParams[ds.mvKey].slipPct === undefined) mvStockParams[ds.mvKey].slipPct = 0;
+    if(mvStockParams[ds.mvKey].weight === undefined) mvStockParams[ds.mvKey].weight = 1; // 옛날 저장된 전략(비중 필드 없음) 불러왔을 때 균등비중으로 채움
   });
 
   const belowCols = maOn ? `<th>하락장 매수k</th><th>하락장 매도k</th>` : '';
+  const weightSum = datasets.reduce((a,ds)=> a + (mvStockParams[ds.mvKey].weight||0), 0);
   el.innerHTML = `
     <table class="resultTable">
-      <thead><tr><th>종목</th><th>k매수${maOn ? '(이평위)' : ''}</th><th>k매도${maOn ? '(이평위)' : ''}</th>${belowCols}<th>슬리피지(%)</th></tr></thead>
+      <thead><tr><th>종목</th><th>k매수${maOn ? '(이평위)' : ''}</th><th>k매도${maOn ? '(이평위)' : ''}</th>${belowCols}<th>슬리피지(%)</th><th>비중(가중치)</th></tr></thead>
       <tbody>
         ${datasets.map(ds => {
           const p = mvStockParams[ds.mvKey];
@@ -3573,6 +3575,7 @@ function renderMvStockParamsTable(){
             <td><input type="number" class="mvKBuyBelow" data-key="${key}" value="${p.kBuyBelow}" step="0.05" style="${inputStyle}"></td>
             <td><input type="number" class="mvKSellBelow" data-key="${key}" value="${p.kSellBelow}" step="0.05" style="${inputStyle}"></td>
           ` : '';
+          const weightPct = weightSum > 0 ? (p.weight/weightSum*100).toFixed(1) : '0.0';
           return `
           <tr>
             <td class="nameCell" style="font-family:var(--body);">${ds.stockName || ds.fileName}</td>
@@ -3580,20 +3583,30 @@ function renderMvStockParamsTable(){
             <td><input type="number" class="mvKSell" data-key="${key}" value="${p.kSell}" step="0.05" style="${inputStyle}"></td>
             ${belowInputs}
             <td><input type="number" class="mvSlipPct" data-key="${key}" value="${p.slipPct}" step="0.01" min="0" style="${inputStyle}"></td>
+            <td><input type="number" class="mvWeight" data-key="${key}" value="${p.weight}" step="0.1" min="0" style="${inputStyle}"> <span class="mvWeightPct" data-key="${key}" style="color:var(--text-dim); font-size:11px;">(${weightPct}%)</span></td>
           </tr>
           `;
         }).join('')}
       </tbody>
     </table>
-    <div style="font-size:12px; color:var(--text-dim); margin-top:6px;">${maOn ? '이평 위/아래 판단 불가 구간(초기)은 그 종목만 그날 거래하지 않습니다. ' : ''}슬리피지(%)는 목표가 자체는 그대로 두고, 체결 시 수수료처럼 종목별로 추가로 깎이는 비용입니다(매수는 더 내고 매도는 덜 받음).</div>
+    <div style="font-size:12px; color:var(--text-dim); margin-top:6px;">${maOn ? '이평 위/아래 판단 불가 구간(초기)은 그 종목만 그날 거래하지 않습니다. ' : ''}슬리피지(%)는 목표가 자체는 그대로 두고, 체결 시 수수료처럼 종목별로 추가로 깎이는 비용입니다(매수는 더 내고 매도는 덜 받음). 비중(가중치)는 서로 상대값이라 합이 100일 필요 없음(전부 1이면 균등분배) — 그날 매수 신호가 난 종목들끼리 이 비율대로 배정예산을 나눠 가짐.</div>
   `;
-  el.querySelectorAll('.mvKBuy, .mvKSell, .mvKBuyBelow, .mvKSellBelow, .mvSlipPct').forEach(inp => {
+  el.querySelectorAll('.mvKBuy, .mvKSell, .mvKBuyBelow, .mvKSellBelow, .mvSlipPct, .mvWeight').forEach(inp => {
     inp.addEventListener('input', () => {
       const key = inp.dataset.key;
       const field = inp.classList.contains('mvKBuy') ? 'kBuy' : inp.classList.contains('mvKSell') ? 'kSell'
-        : inp.classList.contains('mvKBuyBelow') ? 'kBuyBelow' : inp.classList.contains('mvKSellBelow') ? 'kSellBelow' : 'slipPct';
+        : inp.classList.contains('mvKBuyBelow') ? 'kBuyBelow' : inp.classList.contains('mvKSellBelow') ? 'kSellBelow'
+        : inp.classList.contains('mvSlipPct') ? 'slipPct' : 'weight';
       if(!mvStockParams[key]) return;
       mvStockParams[key][field] = parseFloat(inp.value) || 0;
+      // 타이핑 중 매번 테이블 전체를 다시 그리면 입력 포커스가 날아가서, %표시만 가볍게 갱신함(입력창은 안 건드림)
+      if(field === 'weight'){
+        const sum = datasets.reduce((a,ds)=> a + (mvStockParams[ds.mvKey].weight||0), 0);
+        el.querySelectorAll('.mvWeightPct').forEach(span => {
+          const w = mvStockParams[span.dataset.key] ? (mvStockParams[span.dataset.key].weight||0) : 0;
+          span.textContent = `(${sum>0 ? (w/sum*100).toFixed(1) : '0.0'}%)`;
+        });
+      }
     });
   });
 }
@@ -3701,8 +3714,9 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
       }
     }
 
-    // 2단계: 오늘 매수 대기 중(미보유, 오늘 방금 매도한 종목은 제외)인 종목 수로 전날 마감 현금(cashBeforeToday)을
-    // 균등하게 나눠 배정예산을 정하고, 그 예산 안에서 매수 신호가 난 종목만 살 수 있는 최대 수량을 매수함.
+    // 2단계: 오늘 매수 대기 중(미보유, 오늘 방금 매도한 종목은 제외)인 종목들의 비중(가중치, 기본값 1=균등)
+    // 비율대로 전날 마감 현금(cashBeforeToday)을 나눠 배정예산을 정하고, 그 예산 안에서 매수 신호가 난
+    // 종목만 살 수 있는 최대 수량을 매수함. 모든 종목 weight가 1(기본값)이면 이전과 완전히 동일한 균등분배.
     const buyCandidates = [];
     for(let e=0; e<N; e++){
       if(state[e].position !== 'flat') continue;
@@ -3711,8 +3725,8 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
       if(!p || p.idx < 1) continue;
       buyCandidates.push(e);
     }
-    const perBudget = buyCandidates.length > 0 ? cashBeforeToday / buyCandidates.length : 0;
-    if(perBudget > 0){
+    const totalWeight = buyCandidates.reduce((a,e)=> a + (params[datasets[e].mvKey].weight ?? 1), 0);
+    if(totalWeight > 0){
       buyCandidates.forEach(e=>{
         const s = state[e];
         const ds = datasets[e];
@@ -3723,6 +3737,7 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
         const rg = regimeK(e, p, pm.kBuy, pm.kSell, pm.kBuyBelow, pm.kSellBelow);
         if(!rg.ok) return;
         const stockRate = fee + (pm.slipPct||0)/100; // 목표가는 안 건드리고, 체결 시 수수료처럼 종목별로 추가로 더 내는 비용
+        const perBudget = cashBeforeToday * ((pm.weight ?? 1) / totalWeight);
 
         const target = computeBuyPrice(base, prevRange, rg.kBuy);
         if(target < p.low || target > p.high) return;
@@ -3760,13 +3775,14 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
   return { ...stats, dates: masterDates, tradeLog, stockCurves, stockNames: datasets.map(ds=>ds.stockName||ds.fileName), perStock, totalInitCap, finalCash: cash };
 }
 
-// 보유 전략(기준): 각 종목을 masterDates에서 처음 데이터가 있는 날 종가로 총초기투자금/종목수만큼
-// 균등하게 매수해서 그대로 계속 보유(매매 없음) - 실제 전략(리밸런싱 없이 매수대기 종목 수로 현금을
-// 균등 배분)과 같은 "균등 배분" 기준을 써서 1:1로 비교되게 함.
-function computeMvBase(datasets, totalInitCap, masterDates){
+// 보유 전략(기준): 각 종목을 masterDates에서 처음 데이터가 있는 날 종가로 총초기투자금을 종목별
+// 비중(가중치)대로 나눠서 그대로 계속 보유(매매 없음) - 실제 전략(매수대기 종목들의 비중대로 현금을
+// 나눠 배분)과 같은 배분 기준을 써서 1:1로 비교되게 함(weight를 안 건드렸으면 이전과 동일한 균등배분).
+function computeMvBase(datasets, params, totalInitCap, masterDates){
   const dateMaps = datasets.map(ds => new Map(ds.dates.map((d,i)=>[d,i])));
   const n = masterDates.length;
-  const perCap = totalInitCap / datasets.length;
+  const totalWeight = datasets.reduce((a,ds)=> a + (params[ds.mvKey].weight ?? 1), 0);
+  const capByIdx = datasets.map(ds => totalWeight>0 ? totalInitCap * ((params[ds.mvKey].weight ?? 1)/totalWeight) : 0);
   const units = new Array(datasets.length).fill(0);
   const leftoverCash = new Array(datasets.length).fill(0);
   const bought = new Array(datasets.length).fill(false);
@@ -3778,8 +3794,8 @@ function computeMvBase(datasets, totalInitCap, masterDates){
       if(idx === undefined) continue;
       lastPrice[e] = datasets[e].close[idx];
       if(!bought[e]){
-        units[e] = Math.floor(perCap / lastPrice[e]);
-        leftoverCash[e] = perCap - units[e]*lastPrice[e];
+        units[e] = Math.floor(capByIdx[e] / lastPrice[e]);
+        leftoverCash[e] = capByIdx[e] - units[e]*lastPrice[e];
         bought[e] = true;
       }
     }
@@ -3830,7 +3846,7 @@ function runMvStrategy(){
 
   const result = simulateMvPortfolio(datasets, mvStockParams, masterDates, mvInitCap, feePct, prevCloseOn, stabMonths, maFilterOn, maPeriod, slippageOn, slipMode, slipBuyTicks, slipSellTicks);
   lastMvResult = result;
-  const baseCurve = computeMvBase(datasets, mvInitCap, masterDates);
+  const baseCurve = computeMvBase(datasets, mvStockParams, mvInitCap, masterDates);
   lastMvBase = statsFromCurveCustomBase(baseCurve, masterDates, [], stabMonths, result.totalInitCap);
   lastMvBase.dates = masterDates;
 
