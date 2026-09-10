@@ -363,6 +363,10 @@ canvas{max-width:100%;}
       </div>
 
       <div class="panelTitle" style="margin-bottom:10px;">종목별 설정 (k값은 탭1에서 찾은 값을 직접 입력)</div>
+      <div class="capitalRow" style="margin-bottom:10px; display:flex; align-items:flex-end; gap:8px;">
+        <div class="rangeCtrl" style="width:140px;"><label>슬리피지(%) 일괄 적용</label><input type="number" id="mvSlipBulkInput" step="0.01" min="0" placeholder="예: 0.1"></div>
+        <button class="btn btnGhost" id="mvSlipBulkBtn">선택된 전 종목에 적용</button>
+      </div>
       <div id="mvStockParamsTable" style="margin-bottom:16px;"></div>
 
       <div class="uploadPanel" style="margin-bottom:14px;">
@@ -3610,6 +3614,14 @@ function renderMvStockParamsTable(){
     });
   });
 }
+document.getElementById('mvSlipBulkBtn').addEventListener('click', ()=>{
+  const val = parseFloat(document.getElementById('mvSlipBulkInput').value) || 0;
+  getSelectedMvDatasets().forEach(ds => {
+    if(!mvStockParams[ds.mvKey]) return;
+    mvStockParams[ds.mvKey].slipPct = val;
+  });
+  renderMvStockParamsTable(); // 값이 다 같아지므로 포커스 유지 걱정 없이 표 전체를 다시 그려도 됨
+});
 document.getElementById('mvMaFilterOn').addEventListener('change', renderMvStockParamsTable);
 document.getElementById('mvTotalInitCap').addEventListener('input', ()=>{
   mvInitCap = parseFloat(document.getElementById('mvTotalInitCap').value) || 0;
