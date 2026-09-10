@@ -3658,16 +3658,15 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
   const regimeArrs = maFilterOn ? datasets.map(ds => computeMaRegime(ds.close, maPeriod)) : null;
 
   const state = datasets.map(()=> ({ position:'flat', units:0, entryCost:0, entryDate:null, entryPrice:0, tradeList:[] }));
-  // 전체기간/종목마다 상장일이 다른 경우(masterDates가 합집합) 대비: 총 초기자본을 t=0에 한 번에 다 풀지 않고,
-  // 각 종목의 슬롯 자금(비중 비례)을 그 종목 데이터가 "처음 생기는 날"에 새로 투입함 - computeMvBase(보유
-  // 전략 기준)가 이미 같은 방식(각 종목을 자기 첫날에 슬롯 자금으로 매수)으로 동작 중이라, 전략 쪽도 똑같이
-  // 맞춰야 "기준" 대비 부당하게 초반 자금이 먼저 몰리는 일이 없음(2026-09-11 발견/수정). 겹쳐진기간(overlap)
-  // 모드에선 모든 종목이 masterDates[0]부터 데이터가 있으므로 t=0에 전액이 한 번에 투입되어 기존 동작
-  // (cash=totalInitCap)과 완전히 동일 - 하위호환.
-  const totalWeightAll = datasets.reduce((a,ds)=> a + (params[ds.mvKey].weight ?? 1), 0);
-  const slotCap = datasets.map(ds => totalWeightAll>0 ? totalInitCap * ((params[ds.mvKey].weight ?? 1)/totalWeightAll) : 0);
-  const injected = new Array(N).fill(false);
-  let cash = 0;
+  let cash = totalInitCap;
+  // 전체기간/종목마다 상장일이 다른 경우(masterDates가 합집합) 대비: 총 초기자본은 처음부터 다 풀려있고
+  // (사용자가 원한 "둘 다 총자본으로 시작"), 대신 새 종목이 처음 등장하는 날에 그때까지 보유 중이던
+  // 다른 종목들을 전부 현금화해서(강제 청산) 그 현금 풀을 다시 지금 활성화된 종목 수 기준으로 나눠 갖게 함
+  // ("새 종목 생기면 그 시점 금액을 균일하게 나눠서 다시 시작" - 2026-09-11, 슬롯을 미리 나눠 투입하는
+  // 이전 방식은 사용자가 보고 원하던 그림과 달라서 되돌림). 강제 매수는 안 함(그 이후 재매수는 각자의
+  // k신호가 나야만) - 탭2의 "신호 없이는 사지 않음" 원칙은 매수 쪽에서는 그대로 유지, 매도만 이 시점에
+  // 한 번 강제로 일어남.
+  const everSeen = new Array(N).fill(false);
   const curve = new Array(n);
   const stockCurves = datasets.map(()=> new Array(n));
   const tradeLog = []; // 실제 매수/매도 1건씩 기록(배정예산 포함) - "거래 이력" 표/엑셀용
@@ -3704,16 +3703,17 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
   }
 
   for(let t=0; t<n; t++){
-    // 이 종목의 데이터가 오늘 처음 생겼으면(=오늘 상장/최초 거래일) 그 종목 슬롯 자금을 지금 새로 투입함
-    // (기존 보유 종목을 강제로 팔아서 만드는 게 아니라, 새 현금이 들어오는 것 - 위 slotCap 주석 참고).
-    for(let e=0; e<N; e++){
-      if(injected[e]) continue;
-      if(priceAt(e, t) != null){ cash += slotCap[e]; injected[e] = true; }
-    }
     // 실전에서는 매수/매도를 전날 밤에 예약주문으로 미리 걸어두므로, 매수 배정예산은
     // "오늘 매도로 들어올 돈"이 아직 반영 안 된 전날 마감 시점의 현금 기준이어야 함
     // (당일 매도 대금은 그날 저녁에야 정산되어 다음날 주문부터 쓸 수 있음).
     const cashBeforeToday = cash;
+
+    // 오늘 처음 데이터가 생긴(=상장/편입) 종목이 있는지 감지 - "전체기간"처럼 종목마다 상장일이 다른
+    // 백테스트에서 새 종목이 편입되는 시점을 표시해둠(아래 1-1단계에서 씀).
+    const newlyArrived = [];
+    for(let e=0; e<N; e++){
+      if(!everSeen[e] && priceAt(e, t) != null){ everSeen[e] = true; newlyArrived.push(e); }
+    }
 
     // 1단계: 보유 중인 종목의 매도 신호 처리 - 매도대금은 공용 현금으로 합쳐짐(다음날 배정예산부터 반영)
     const soldToday = new Set(); // 오늘 매도한 종목은 같은 날 바로 재매수하지 않음(하루 한 종목당 매수/매도 중 1건만)
@@ -3735,6 +3735,28 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
         const proceeds = s.units*target*(1-stockRate);
         s.tradeList.push({ ret: proceeds/s.entryCost - 1, idx: t, entryDate: s.entryDate, entryPrice: s.entryPrice, exitDate: masterDates[t], exitPrice: target, entryCost: s.entryCost, proceeds });
         tradeLog.push({ date: masterDates[t], name: ds.stockName||ds.fileName, side:'매도', price: target, qty: s.units, amount: proceeds, budget: null });
+        cash += proceeds;
+        s.units = 0; s.position = 'flat';
+        soldToday.add(e);
+      }
+    }
+
+    // 1-1단계: 오늘 새 종목이 편입됐으면(newlyArrived), 그때까지 보유 중이던(자기 신호로는 아직 안 팔린)
+    // 다른 종목들을 전부 오늘 종가로 강제 청산함 - "새 종목이 생기면 그 시점 총자산을 지금 활성화된 종목
+    // 수 기준으로 다시 나눠 갖는다"는 요청(2026-09-11)을 구현. 강제 매도만 함(강제 매수는 안 함) - 청산된
+    // 현금은 2단계의 평소 비중기반 배정예산 로직을 타고, 각자 k신호가 나는 종목부터 자연스럽게 재매수됨.
+    if(newlyArrived.length > 0){
+      for(let e=0; e<N; e++){
+        const s = state[e];
+        if(s.position !== 'long') continue;
+        const ds = datasets[e];
+        const p = priceAt(e, t);
+        if(!p) continue;
+        const pm = params[ds.mvKey];
+        const stockRate = fee + (pm.slipPct||0)/100;
+        const proceeds = s.units*p.close*(1-stockRate);
+        s.tradeList.push({ ret: proceeds/s.entryCost - 1, idx: t, entryDate: s.entryDate, entryPrice: s.entryPrice, exitDate: masterDates[t], exitPrice: p.close, entryCost: s.entryCost, proceeds });
+        tradeLog.push({ date: masterDates[t], name: ds.stockName||ds.fileName, side:'강제매도(신규종목편입)', price: p.close, qty: s.units, amount: proceeds, budget: null });
         cash += proceeds;
         s.units = 0; s.position = 'flat';
         soldToday.add(e);
@@ -3802,32 +3824,45 @@ function simulateMvPortfolio(datasets, params, masterDates, totalInitCap, feePct
   return { ...stats, dates: masterDates, tradeLog, stockCurves, stockNames: datasets.map(ds=>ds.stockName||ds.fileName), perStock, totalInitCap, finalCash: cash };
 }
 
-// 보유 전략(기준): 각 종목을 masterDates에서 처음 데이터가 있는 날 종가로 총초기투자금을 종목별
-// 비중(가중치)대로 나눠서 그대로 계속 보유(매매 없음) - 실제 전략(매수대기 종목들의 비중대로 현금을
-// 나눠 배분)과 같은 배분 기준을 써서 1:1로 비교되게 함(weight를 안 건드렸으면 이전과 동일한 균등배분).
+// 보유 전략(기준): 처음엔 총초기투자금 전액을 그 시점에 활성화된(데이터가 있는) 종목들에 비중대로
+// 매수해서 계속 보유하다가, 새 종목이 편입될 때마다 그 시점까지의 평가금액 전체를 그때 활성화된
+// 종목 수(+새 종목) 기준으로 다시 비중대로 재매수함(2026-09-11: "종목마다 상장일이 다른 전체기간
+// 백테스트에서, 새 종목 생기면 그 시점 금액을 지금 활성 종목 수 기준으로 다시 나눠 갖는다"는 요청
+// 반영 - simulateMvPortfolio()의 1-1단계 강제청산과 같은 철학, 다만 여긴 항상 100% 투자 상태를
+// 유지하는 게 "보유" 기준이라 청산 즉시 다시 전량 재매수함). weight를 안 건드렸으면 종목 수가
+// 고정된 "겹쳐진기간"에서는 이전과 동일(모든 종목이 t=0에 한 번에 활성화되어 재분배가 1번만 일어남).
 function computeMvBase(datasets, params, totalInitCap, masterDates){
   const dateMaps = datasets.map(ds => new Map(ds.dates.map((d,i)=>[d,i])));
   const n = masterDates.length;
-  const totalWeight = datasets.reduce((a,ds)=> a + (params[ds.mvKey].weight ?? 1), 0);
-  const capByIdx = datasets.map(ds => totalWeight>0 ? totalInitCap * ((params[ds.mvKey].weight ?? 1)/totalWeight) : 0);
-  const units = new Array(datasets.length).fill(0);
-  const leftoverCash = new Array(datasets.length).fill(0);
-  const bought = new Array(datasets.length).fill(false);
-  const lastPrice = new Array(datasets.length).fill(0);
+  const N = datasets.length;
+  const units = new Array(N).fill(0);
+  const leftoverCash = new Array(N).fill(0);
+  const active = new Array(N).fill(false);
+  const lastPrice = new Array(N).fill(0);
   const curve = new Array(n);
+  let everActivated = false;
   for(let t=0; t<n; t++){
-    for(let e=0; e<datasets.length; e++){
+    let anyNewToday = false;
+    for(let e=0; e<N; e++){
       const idx = dateMaps[e].get(masterDates[t]);
       if(idx === undefined) continue;
       lastPrice[e] = datasets[e].close[idx];
-      if(!bought[e]){
-        units[e] = Math.floor(capByIdx[e] / lastPrice[e]);
-        leftoverCash[e] = capByIdx[e] - units[e]*lastPrice[e];
-        bought[e] = true;
+      if(!active[e]){ active[e] = true; anyNewToday = true; }
+    }
+    if(anyNewToday){
+      let total;
+      if(!everActivated){ total = totalInitCap; everActivated = true; }
+      else { total = 0; for(let e=0; e<N; e++){ if(active[e]) total += units[e]*lastPrice[e] + leftoverCash[e]; } }
+      const totalWeight = datasets.reduce((a,ds,e)=> active[e] ? a + (params[ds.mvKey].weight ?? 1) : a, 0);
+      for(let e=0; e<N; e++){
+        if(!active[e]){ units[e]=0; leftoverCash[e]=0; continue; }
+        const share = totalWeight>0 ? total * ((params[datasets[e].mvKey].weight ?? 1)/totalWeight) : 0;
+        units[e] = Math.floor(share / lastPrice[e]);
+        leftoverCash[e] = share - units[e]*lastPrice[e];
       }
     }
     let v = 0;
-    for(let e=0; e<datasets.length; e++){ if(bought[e]) v += units[e]*lastPrice[e] + leftoverCash[e]; }
+    for(let e=0; e<N; e++){ if(active[e]) v += units[e]*lastPrice[e] + leftoverCash[e]; }
     curve[t] = v;
   }
   return curve;
