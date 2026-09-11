@@ -423,6 +423,9 @@ canvas{max-width:100%;}
 
       <div style="margin-top:22px; padding-top:18px; border-top:1px solid var(--line);">
         <div class="panelTitle" style="margin-bottom:10px;">시작일 기준 1년 단위 성과 (전체 포트폴리오)</div>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom:10px; font-size:13px; color:var(--text-dim);">
+          <input type="checkbox" id="mvYearlyMonthlyOn"> 1개월 단위로 보기
+        </label>
         <div id="mvYearlyTable"></div>
       </div>
 
@@ -526,6 +529,9 @@ canvas{max-width:100%;}
         <div class="panelTitle" style="margin-bottom:10px;">시작일 기준 1년 단위 성과</div>
         <div class="btnRow" style="margin-bottom:10px;">
           <div class="rangeCtrl" style="width:280px;"><label>전략 선택</label><select id="penYearlySelect"></select></div>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; align-self:flex-end; margin-bottom:9px; font-size:13px; color:var(--text-dim);">
+            <input type="checkbox" id="penYearlyMonthlyOn"> 1개월 단위로 보기
+          </label>
         </div>
         <div id="penYearlyTable"></div>
       </div>
@@ -2592,6 +2598,53 @@ function computeYearlyStats(curve, dates, tradeList){
   return periods;
 }
 
+// 1개월 단위 버전(2026-09-11, 탭2/탭3 "1개월 단위로 보기" 체크박스용) - computeYearlyStats()는 그대로 두고
+// (기본값인 1년 단위 쪽 동작을 전혀 안 건드리려고) 완전히 새 함수로 분리함. 경계는 위에 있는
+// buildPeriodBoundariesGeneric(dates, 1)을 그대로 재사용(실제 달력 월 단위 - "매 30일"이 아니라
+// computeMonthlyFirstTradingDayIndices류와 같은 부류의 정확한 달력 계산), 구간별 통계 계산 방식은
+// computeYearlyStats와 동일하게 맞춤.
+function computeMonthlyStats(curve, dates, tradeList){
+  const boundaries = buildPeriodBoundariesGeneric(dates, 1);
+  const trades = tradeList || [];
+  const ONE_YEAR_MS = 365.25*24*3600*1000;
+  return boundaries.map(([startIdx, endIdx]) => {
+    const startVal = curve[startIdx], endVal = curve[endIdx];
+    const yearsElapsed = (new Date(dates[endIdx]).getTime() - new Date(dates[startIdx]).getTime())/ONE_YEAR_MS;
+    let peak = startVal, worst = 0;
+    for(let i=startIdx;i<=endIdx;i++){ if(curve[i]>peak) peak=curve[i]; const dd=(curve[i]-peak)/peak; if(dd<worst) worst=dd; }
+    const periodTrades = trades.filter(tr => tr.idx >= startIdx && tr.idx <= endIdx).map(tr=>tr.ret);
+    const wl = winLossStats(periodTrades);
+    return {
+      label: `${dates[startIdx]} ~ ${dates[endIdx]}`,
+      ret: endVal/startVal - 1,
+      cagr: yearsElapsed > 0.02 ? Math.pow(endVal/startVal, 1/yearsElapsed)-1 : (endVal/startVal-1),
+      mdd: worst,
+      trades: wl.trades,
+      winRate: wl.winRate,
+      profitFactor: wl.profitFactor,
+      tpi: wl.tpi
+    };
+  });
+}
+
+// 탭2/탭3 성과 표 정렬(2026-09-11) - 헤더 클릭으로 오름/내림차순, 다시 누르면 방향 토글. "기간" 컬럼은
+// 라벨이 "YYYY-MM-DD ~ ..." 형태라 문자열 정렬 그대로가 날짜순과 같음(별도 정렬키 불필요).
+function sortPeriodRows(periods, field, dir){
+  return periods.slice().sort((a,b)=>{
+    const av = a[field], bv = b[field];
+    if(av == null && bv == null) return 0;
+    if(av == null) return 1; // 데이터 없음(-)은 항상 뒤로
+    if(bv == null) return -1;
+    if(av < bv) return dir==='asc' ? -1 : 1;
+    if(av > bv) return dir==='asc' ? 1 : -1;
+    return 0;
+  });
+}
+function sortArrow(sortState, field){
+  if(sortState.field !== field) return '';
+  return sortState.dir === 'asc' ? ' ▲' : ' ▼';
+}
+
 function getYearlySelectOptions(){
   const base = {label:'보유 전략 (기준)', curve:BASE.curve, tradeList:[]};
   const sortedCombos = lastLwResults.slice().sort((a,b)=> b.ret - a.ret);
@@ -4031,13 +4084,20 @@ function renderMvChart(){
   });
 }
 
+const MV_YEARLY_COLS = [
+  {field:'label', label:'기간'}, {field:'ret', label:'수익률'}, {field:'cagr', label:'CAGR'}, {field:'mdd', label:'MDD'},
+  {field:'trades', label:'거래횟수'}, {field:'winRate', label:'승률'}, {field:'profitFactor', label:'손익비'}, {field:'tpi', label:'TPI'},
+];
+let mvYearlySort = {field:'label', dir:'asc'}; // 기본값: 기간, 오름차순(오래된 기간 먼저) - 기존 표시 순서와 동일
 function renderMvYearlyTable(){
   const r = lastMvResult;
   if(!r) return;
-  const periods = computeYearlyStats(r.curve, r.dates, r.tradeList);
+  const monthly = document.getElementById('mvYearlyMonthlyOn').checked;
+  const periodsRaw = monthly ? computeMonthlyStats(r.curve, r.dates, r.tradeList) : computeYearlyStats(r.curve, r.dates, r.tradeList);
+  const periods = sortPeriodRows(periodsRaw, mvYearlySort.field, mvYearlySort.dir);
   const html = `
     <table class="resultTable">
-      <thead><tr><th>기간</th><th>수익률</th><th>CAGR</th><th>MDD</th><th>거래횟수</th><th>승률</th><th>손익비</th><th>TPI</th></tr></thead>
+      <thead><tr>${MV_YEARLY_COLS.map(c=>`<th class="sortableTh" data-field="${c.field}" style="cursor:pointer; user-select:none;">${c.label}${sortArrow(mvYearlySort, c.field)}</th>`).join('')}</tr></thead>
       <tbody>
         ${periods.map(p=>`
           <tr>
@@ -4054,8 +4114,17 @@ function renderMvYearlyTable(){
       </tbody>
     </table>
   `;
-  document.getElementById('mvYearlyTable').innerHTML = html;
+  const el = document.getElementById('mvYearlyTable');
+  el.innerHTML = html;
+  el.querySelectorAll('.sortableTh').forEach(th => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.field;
+      mvYearlySort = { field, dir: (mvYearlySort.field===field && mvYearlySort.dir==='asc') ? 'desc' : 'asc' };
+      renderMvYearlyTable();
+    });
+  });
 }
+document.getElementById('mvYearlyMonthlyOn').addEventListener('change', renderMvYearlyTable);
 
 function renderMvTradeLogTable(){
   const r = lastMvResult;
@@ -5059,6 +5128,10 @@ function populatePenTradeLogSelect(){
   renderPenTradeLogTable();
 }
 
+const PEN_YEARLY_COLS = [
+  {field:'label', label:'기간'}, {field:'ret', label:'수익률'}, {field:'cagr', label:'CAGR'}, {field:'mdd', label:'MDD'},
+];
+let penYearlySort = {field:'label', dir:'asc'}; // 기본값: 기간, 오름차순(오래된 기간 먼저) - 기존 표시 순서와 동일
 function renderPenYearlyTable(){
   const sel = document.getElementById('penYearlySelect');
   const options = getCheckedPenOptions();
@@ -5067,10 +5140,12 @@ function renderPenYearlyTable(){
     return;
   }
   const chosen = options[+sel.value] || options[0];
-  const periods = computeYearlyStats(chosen.curve, chosen.dates, chosen.tradeList);
+  const monthly = document.getElementById('penYearlyMonthlyOn').checked;
+  const periodsRaw = monthly ? computeMonthlyStats(chosen.curve, chosen.dates, chosen.tradeList) : computeYearlyStats(chosen.curve, chosen.dates, chosen.tradeList);
+  const periods = sortPeriodRows(periodsRaw, penYearlySort.field, penYearlySort.dir);
   const html = `
     <table class="resultTable">
-      <thead><tr><th>기간</th><th>수익률</th><th>CAGR</th><th>MDD</th></tr></thead>
+      <thead><tr>${PEN_YEARLY_COLS.map(c=>`<th class="sortableTh" data-field="${c.field}" style="cursor:pointer; user-select:none;">${c.label}${sortArrow(penYearlySort, c.field)}</th>`).join('')}</tr></thead>
       <tbody>
         ${periods.map(p=>`
           <tr>
@@ -5083,9 +5158,18 @@ function renderPenYearlyTable(){
       </tbody>
     </table>
   `;
-  document.getElementById('penYearlyTable').innerHTML = html;
+  const el = document.getElementById('penYearlyTable');
+  el.innerHTML = html;
+  el.querySelectorAll('.sortableTh').forEach(th => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.field;
+      penYearlySort = { field, dir: (penYearlySort.field===field && penYearlySort.dir==='asc') ? 'desc' : 'asc' };
+      renderPenYearlyTable();
+    });
+  });
 }
 document.getElementById('penYearlySelect').addEventListener('change', ()=>{ renderPenYearlyTable(); renderPenStockSummary(); });
+document.getElementById('penYearlyMonthlyOn').addEventListener('change', renderPenYearlyTable);
 
 function renderPenTradeLogTable(){
   const sel = document.getElementById('penTradeLogSelect');
