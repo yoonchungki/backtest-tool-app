@@ -4580,14 +4580,18 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
   const monthlyIdxs = computeMonthlyFirstTradingDayIndices(masterDates);
   const rebalanceSet = new Set(monthlyIdxs.filter((v,i)=> i % rebalanceMonths === 0 && v !== 0)); // 0번째(=t=0, 매 rebalanceMonths의 배수 위치)는 최초 매수라 별도 처리
 
-  // 자산 e의 "어제"(마스터 인덱스 t-1) 시점까지 최근 60거래일 로그수익률의 연율화 변동성.
-  // "1일 전 시점 기준"이라 오늘(t) 수익률은 절대 안 씀(미래참조 방지). 그 종목 자체 시계열의
-  // 인덱스 기준으로 60일을 세므로(마스터 날짜 기준 아님), 종목마다 상장일이 달라도 안전함.
-  // 60거래일이 안 쌓였으면(초기 구간) null.
+  // 자산 e의 "어제" 시점까지 최근 60거래일 로그수익률의 연율화 변동성. "1일 전 시점 기준"이라
+  // 오늘(t) 수익률은 절대 안 씀(미래참조 방지). 그 종목 자체 시계열의 인덱스 기준으로 60일을 세므로
+  // (마스터 날짜 기준 아님), 종목마다 상장일이 달라도 안전함 - 그래서 오늘(t)의 마스터 날짜를 그
+  // 종목 자체 인덱스로 먼저 변환한 뒤 거기서 1을 뺌(예전엔 masterDates[t-1]로 먼저 찾았는데, t=0(최초
+  // 매수일)엔 masterDates[-1]이 아예 없어서 데이터가 60일 넘게 있어도 항상 null이 되는 버그가 있었음
+  // - 2026-09-11 발견/수정, 최초 매수 때도 규칙A가 적용되게 하려던 것이었음). 60거래일이 안 쌓였으면
+  // (그 종목 자체가 상장한 지 얼마 안 됐으면) null.
   function annualizedVol(e, t){
-    if(t <= 0) return null;
-    const idx = dateMaps[e].get(masterDates[t-1]); // "어제" 시점의 그 종목 자체 인덱스
-    if(idx === undefined || idx < 60) return null;
+    const idxToday = dateMaps[e].get(masterDates[t]); // 오늘 시점의 그 종목 자체 인덱스
+    if(idxToday === undefined) return null;
+    const idx = idxToday - 1; // "어제" 인덱스(그 종목 자체 기준) - t=0이어도 상장 이후 60일 넘게 지났으면 여기서 구해짐
+    if(idx < 60) return null;
     const closeArr = datasets[e].close;
     const rets = [];
     for(let k=idx-59; k<=idx; k++) rets.push(Math.log(closeArr[k]/closeArr[k-1]));
