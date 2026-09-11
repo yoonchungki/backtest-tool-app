@@ -4166,9 +4166,11 @@ function buildUsEtfKrwSeries(ticker){
   return result;
 }
 
-// 미국ETF/환율 데이터는 PRESETS와 달리 Vercel Blob(여러 기기 동기화)엔 안 올리고 이 기기의
-// localStorage에만 저장함 - 참고용 보조 데이터라 기기마다 따로 최신화해도 문제없고, PRESETS 오버라이드
-// Blob에 매번 900KB+를 얹으면 그 저장/전송 비용만 커짐(위 "1." 패턴과 의도적으로 다르게 감).
+// 미국ETF/환율 데이터는 이 기기의 localStorage에 먼저 저장해서 빠르게 화면에 반영하고(용량이 커서
+// PRESETS처럼 즉시 Blob을 기다리진 않음 - 위 "1." 패턴과 다르게 감), 이어서 서버(Vercel Blob,
+// api/usetf_store.py)에도 저장 시도해서 다른 기기와 cron 자동갱신(api/cron_update_all.py)이 갱신한
+// 값도 받아볼 수 있게 함(2026-09-11 추가 - 원래는 기기별 localStorage 전용이었는데, "전체 종목
+// 최신화" cron 자동화가 이 데이터도 갱신하게 해달라는 요청으로 서버 동기화를 붙임).
 const PEN_US_ETF_OVERRIDE_KEY = 'pen_us_etf_override_v1';
 function loadUsEtfOverrides(){
   try{
@@ -4187,13 +4189,57 @@ function loadUsEtfOverrides(){
   }catch(e){ console.warn('저장된 미국ETF/환율 최신 데이터를 불러오지 못했습니다:', e); }
 }
 function saveUsEtfOverrides(){
+  const usEtf = {};
+  Object.keys(US_ETF_DATA).forEach(ticker => { usEtf[ticker] = US_ETF_DATA[ticker]; });
+  const payload = { usEtf, usdKrw: { dates: USD_KRW_DATA.dates, close: USD_KRW_DATA.close } };
   try{
-    const usEtf = {};
-    Object.keys(US_ETF_DATA).forEach(ticker => { usEtf[ticker] = US_ETF_DATA[ticker]; });
-    localStorage.setItem(PEN_US_ETF_OVERRIDE_KEY, JSON.stringify({ usEtf, usdKrw: { dates: USD_KRW_DATA.dates, close: USD_KRW_DATA.close } }));
+    localStorage.setItem(PEN_US_ETF_OVERRIDE_KEY, JSON.stringify(payload));
   }catch(e){ console.warn('미국ETF/환율 최신 데이터를 브라우저에 저장하지 못했습니다(용량 초과 등):', e); }
+  // 다른 기기·cron 자동화도 보이도록 서버(Vercel Blob)에도 저장 시도 - "마지막 저장이 이김"(PRESETS와 동일 패턴).
+  fetch('/api/usetf_store', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  }).catch(e => console.warn('서버(다른 기기/자동화용) 미국ETF/환율 저장 실패:', e));
 }
 loadUsEtfOverrides();
+
+// 페이지를 열 때마다 서버(다른 기기 또는 cron 자동화)가 갱신해둔 최신 미국ETF/환율 데이터를 가져와
+// 병합함(로컬에 없는 날짜만 추가되는 union 병합, mergeSeriesData 재사용 - 어느 쪽이 더 최신인지
+// 몰라도 양쪽 다 데이터 손실 없이 합쳐짐). syncPresetOverridesFromServer()와 같은 패턴으로 페이지
+// 로드 시 백그라운드로 1번만 실행됨(아래 loadPresetOverrides() 호출부 근처에서 같이 호출).
+async function syncUsEtfOverridesFromServer(){
+  try{
+    const resp = await fetch('/api/usetf_store');
+    if(!resp.ok) return;
+    const saved = await resp.json();
+    let changed = false;
+    if(saved.usEtf){
+      Object.keys(saved.usEtf).forEach(ticker => {
+        if(!US_ETF_DATA[ticker]) return; // 내장 티커만(새 티커 추가는 아직 미지원 - loadUsEtfOverrides와 동일 정책)
+        const remote = saved.usEtf[ticker];
+        if(!remote || !remote.dates || remote.dates.length === 0) return;
+        const pairs = remote.dates.map((d,i)=>[d, remote.close[i]]);
+        const merged = mergeSeriesData(US_ETF_DATA[ticker], pairs);
+        if(merged.dates.length !== US_ETF_DATA[ticker].dates.length) changed = true;
+        US_ETF_DATA[ticker] = merged;
+      });
+    }
+    if(saved.usdKrw && saved.usdKrw.dates && saved.usdKrw.dates.length > 0){
+      const pairs = saved.usdKrw.dates.map((d,i)=>[d, saved.usdKrw.close[i]]);
+      const merged = mergeSeriesData(USD_KRW_DATA, pairs);
+      if(merged.dates.length !== USD_KRW_DATA.dates.length) changed = true;
+      USD_KRW_DATA.dates = merged.dates; USD_KRW_DATA.close = merged.close;
+    }
+    if(!changed) return;
+    Object.keys(_usEtfKrwCache).forEach(k => delete _usEtfKrwCache[k]); // 원화환산 캐시 무효화
+    try{
+      localStorage.setItem(PEN_US_ETF_OVERRIDE_KEY, JSON.stringify({
+        usEtf: Object.fromEntries(Object.keys(US_ETF_DATA).map(t=>[t, US_ETF_DATA[t]])),
+        usdKrw: { dates: USD_KRW_DATA.dates, close: USD_KRW_DATA.close },
+      }));
+    }catch(e){}
+    if(typeof updatePenUsEtfNote === 'function') updatePenUsEtfNote();
+  }catch(e){ console.warn('서버의 미국ETF/환율 최신 데이터를 동기화하지 못했습니다(오프라인 등):', e); }
+}
 
 // "전체 종목 최신화"에서 같이 호출됨 - US_ETF_DATA의 각 티커 + USD/KRW 환율(야후 티커 "KRW=X")을
 // 서버 프록시(/api/usetf, api/usetf.py)로 한 번에 조회해서 마지막 저장일 다음날부터 오늘까지만 받아옴.
@@ -5130,6 +5176,7 @@ updatePenPeriodDefaults(false);
 renderPenStrategyPresetList();
 refreshAllPresetUI(); // localStorage에 저장된 추가 종목을 탭1 드롭다운에도 반영(체크박스 목록은 위에서 이미 최신 상태로 그려짐)
 syncPresetOverridesFromServer(); // 다른 기기가 저장해둔 최신 데이터를 백그라운드로 가져와서 덧씌움(느려도 화면은 이미 떠 있음)
+syncUsEtfOverridesFromServer(); // 미국ETF/환율도 같은 방식으로 - 다른 기기 또는 cron 자동화가 갱신해둔 값을 백그라운드로 병합
 </script>
 </body>
 </html>
