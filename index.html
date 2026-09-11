@@ -4556,6 +4556,7 @@ function computeMonthlyFirstTradingDayIndices(dates){
 // 안에서 매도 먼저 처리해 확보한 현금을 매수에 씀 - 탭2 여러종목투자와 동일한 순서). 아직 상장 전
 // (데이터 없음)인 종목은 그 리밸런싱에서 제외하고 나머지 종목끼리 비중을 정규화함.
 // useInverseVol/useDdCut: 사용자가 별도로 검증해온 두 규칙(둘 다 옵션, 체크박스로 켜고 끔).
+const PEN_CASH_ANNUAL_RATE = 0.025; // 규칙B(DD컷)로 현금 보유 구간이 생겼을 때 그 현금에 적용할 연이율(2026-09-11)
 function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, feePct, rebalanceMonths, useInverseVol, useDdCut){
   const dateMaps = datasets.map(ds => new Map(ds.dates.map((d,i)=>[d,i])));
   const n = masterDates.length;
@@ -4676,6 +4677,15 @@ function simulatePensionPortfolio(datasets, weights, masterDates, totalInitCap, 
   }
 
   for(let t=0; t<n; t++){
+    // 규칙B(DD컷)로 못 산 만큼이 현금으로 남는 구간엔 연 2.5% 이자가 붙는다고 가정(2026-09-11, 사용자
+    // 요청 - 예전엔 "현금 이자 미반영"이었는데, 이번에 반영해달라고 함). 어제 마감 현금 잔액이 오늘까지
+    // (달력일 기준) 그 이율로 불어난 뒤에, 오늘의 매도/매수(doRebalance)가 그 위에서 처리됨. 규칙B를
+    // 안 켰으면(useDdCut=false) 전혀 적용 안 함 - 평소엔 거의 항상 100% 투자 상태라 현금이 의미있게
+    // 오래 머무르는 경우가 없어서, 괜히 사소한 이자를 붙여 예전 결과와 달라지게 하지 않으려는 것.
+    if(useDdCut && t > 0){
+      const days = (new Date(masterDates[t]) - new Date(masterDates[t-1])) / (1000*3600*24);
+      cash *= Math.pow(1 + PEN_CASH_ANNUAL_RATE, days/365);
+    }
     if(t === 0){ cash = totalInitCap; doRebalance(t); }
     else if(rebalanceSet.has(t)){ doRebalance(t); }
 
