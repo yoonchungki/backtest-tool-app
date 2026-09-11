@@ -2426,13 +2426,26 @@ async function runLw(){
   const bBelowMax = parseFloat(document.getElementById('lwBuyBelowMax').value);
   const sBelowMin = parseFloat(document.getElementById('lwSellBelowMin').value);
   const sBelowMax = parseFloat(document.getElementById('lwSellBelowMax').value);
-  const isAboveArr = maFilterOn ? computeMaRegime(DATA.close, maPeriod) : null;
+  // MA20 판단불가(초기 구간)가 "선택한 기간 자체의 시작"이 아니라 "그 종목이 상장한 이래 실제
+  // 데이터가 maPeriod일 미만인 경우"에만 나오도록, 분석기간을 좁혀도(DATA=FULL_DATA를 기간으로
+  // 자른 것) MA/RSI는 항상 FULL_DATA(전체 상장 이력)를 기준으로 계산함 - 탭2/탭3(regimeArrs를
+  // 종목 자체의 전체 시계열 인덱스로 계산)와 동일한 방식으로 맞춤(2026-09-11 버그 발견/수정).
+  // 안 그러면 좁힌 기간이 maPeriod일보다 짧을 때 그 기간 내내 판단불가 처리돼서 거래가 아예 안 나옴
+  // (예: MA20 필터에서 3주짜리 기간만 골라 돌리면 그 전체 기간이 항상 초기 20일 이내로 잡힘).
+  // DATA는 FULL_DATA의 연속된 날짜 구간만 잘라낸 것(filterByPeriod)이라, FULL_DATA에서
+  // DATA.dates[0]의 위치(offset)만큼 밀어서 그 길이만큼 잘라내면 DATA의 t 인덱스와 정확히 맞음.
+  const fullOffset = DATA.dates.length > 0 ? FULL_DATA.dates.indexOf(DATA.dates[0]) : 0;
+  const isAboveArr = maFilterOn
+    ? computeMaRegime(FULL_DATA.close, maPeriod).slice(fullOffset, fullOffset + DATA.close.length)
+    : null;
 
   const rsiBuyOn = document.getElementById('lwRsiBuyOn').checked;
   const rsiSellOn = document.getElementById('lwRsiSellOn').checked;
   const rsiPeriod = parseInt(document.getElementById('lwRsiPeriod').value)||14;
   const rsiOpts = {
-    rsiArr: (rsiBuyOn || rsiSellOn) ? computeRsiArr(DATA.close, rsiPeriod) : null,
+    rsiArr: (rsiBuyOn || rsiSellOn)
+      ? computeRsiArr(FULL_DATA.close, rsiPeriod).slice(fullOffset, fullOffset + DATA.close.length)
+      : null,
     buyOn: rsiBuyOn, buyOp: document.getElementById('lwRsiBuyOp').value, buyVal: parseFloat(document.getElementById('lwRsiBuyVal').value),
     sellOn: rsiSellOn, sellOp: document.getElementById('lwRsiSellOp').value, sellVal: parseFloat(document.getElementById('lwRsiSellVal').value)
   };
