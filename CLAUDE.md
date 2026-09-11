@@ -158,6 +158,17 @@
 
 정렬은 `sortPeriodRows(periods, field, dir)`(범용 헬퍼, `null`/`-` 값은 항상 뒤로 보냄)을 만들어서 테이블 헤더(`<th class="sortableTh" data-field="...">`)를 클릭하면 그 필드로 정렬 상태(`mvYearlySort`/`penYearlySort`, 모듈 전역)를 갱신하고 다시 렌더링함 — 같은 헤더를 또 누르면 방향 토글(오름↔내림), 헤더 텍스트 옆에 ▲/▼로 현재 정렬 상태 표시. **기본 정렬은 "기간" 오름차순**(오래된 기간 먼저 — 기존 표시 순서와 동일하게 유지, `label`이 "YYYY-MM-DD ~ ..." 형태라 문자열 정렬 자체가 날짜순과 같아서 별도 정렬키 불필요). "월단위 보기" 체크박스도, 헤더 클릭도 매번 `renderMvYearlyTable()`/`renderPenYearlyTable()`을 다시 호출해서 `<thead>`/`<tbody>`를 통째로 다시 그리는 방식(입력창이 아니라 클릭 이벤트라 포커스 손실 걱정 없음 — "비중(가중치)" 입력칸과는 다른 패턴).
 
+### 15. 탭1 버그 수정: 분석기간을 좁히면 MA/RSI 필터가 그 좁힌 기간 자체를 "상장 초기"로 오인해서 거래가 안 나옴 (2026-09-11)
+사용자가 KODEX 2차전지산업(305720)으로 같은 k값(이평위 0.95/0.9, 이평아래 0.7/0.05, MA20)을 "7/1~9/11"로 돌리면 8/24에 매수가 나오는데, "8/20~9/11"(더 좁은 기간, 3주 미만)로 돌리면 거래가 아예 안 나오는 걸 발견해서 요청한 검토 건.
+
+**원인**: `applyPeriodAndRerun()`이 분석기간을 바꿀 때마다 `DATA = filterByPeriod(FULL_DATA, s, e)`로 **`DATA` 자체를 그 기간만큼 잘라버림**(원본 `FULL_DATA`는 그대로 유지). 그런데 `runLw()`가 `isAboveArr = computeMaRegime(DATA.close, maPeriod)`처럼 **이미 잘린 `DATA`를 기준으로 MA를 계산**하고 있었음 — `computeMaRegime()`은 `t < maPeriod`인 초반 구간은 항상 판단불가(`null`)를 주는데, 좁힌 기간 자체의 거래일 수가 `maPeriod`(20일)보다 적으면 그 기간 전체가 계속 "판단불가"로 남아서 `regimeOk`가 한 번도 `true`가 안 되고, 결과적으로 그 기간 내내 거래가 한 건도 안 나옴. RSI 필터(`computeRsiArr(DATA.close, rsiPeriod)`)도 완전히 같은 구조라 동일한 버그를 안고 있었음.
+
+**탭2/탭3는 이 버그가 없었던 이유**: `simulateMvPortfolio()`/`simulatePensionPortfolio()`는 `regimeArrs[e] = computeMaRegime(ds.close, maPeriod)`를 계산할 때 `ds`가 `PRESETS[code]`(그 종목의 전체 저장 이력, 기간으로 안 잘림) 그대로이고, 대신 분석기간은 별도의 `masterDates`(표시용 날짜 목록)로만 걸러서, `regimeArrs[e][p.idx]`를 그 종목 자체의 전체 이력 인덱스로 조회함. 즉 탭2/탭3는 처음부터 "원본은 안 자르고 표시 범위만 필터링"하는 구조였고, 탭1만 유일하게 `DATA` 원본 자체를 잘라서 MA/RSI 계산에 쓰고 있었던 게 이번 버그의 원인.
+
+**고침**: `runLw()`에서 `isAboveArr`/`rsiOpts.rsiArr`를 `DATA.close` 대신 **`FULL_DATA.close`로 계산한 뒤, `DATA`에 해당하는 구간만 슬라이스**해서 씀. `DATA`는 항상 `FULL_DATA`의 연속된 날짜 구간(`filterByPeriod`가 정렬된 배열에서 `>=start && <=end`로 거른 것이라 인덱스가 항상 연속함)이므로, `fullOffset = FULL_DATA.dates.indexOf(DATA.dates[0])`만 구하면 `computeMaRegime(FULL_DATA.close, maPeriod).slice(fullOffset, fullOffset + DATA.close.length)`가 `DATA`의 `t` 인덱스와 정확히 맞아떨어짐(탭2/탭3와 같은 결과를 내는 방식으로 통일). **"전체기간"으로 볼 때(`DATA === FULL_DATA`, 종목 선택/업로드 직후 항상 이 상태)는 `fullOffset=0`이고 슬라이스 길이가 전체 길이와 같아서 이전과 수학적으로 완전히 동일** — 기존 동작에 영향 없음, 기간을 좁혔을 때만 이 차이가 나타남.
+
+**검증**: 실제 305720 데이터로 재현 — 넓은 기간(2026-01-02~07-31, 142거래일)에서 나온 거래 중 마지막 구간(7/10~7/13, 7/23~7/27)을, 같은 k값으로 좁힌 기간(2026-07-08~07-31, 17거래일=MA20보다 짧음)만 따로 돌렸을 때 **고치기 전 로직(옛 방식 재현)은 0건, 고친 후에는 정확히 그 2건이 동일한 진입일·청산일·수익률로 그대로 나오는 것**을 확인(실제 `runLw()` 프로덕션 경로로도 재확인). "전체기간"으로 되돌렸을 때(1933거래일, 상장일 2018-09-12부터)도 첫 거래가 2018-10-19(상장 후 20영업일 근처)로 정상적으로 나오는 것까지 확인.
+
 ## 주요 변경 이력 (최근 → 과거, 상세 배경은 `git log`로 각 커밋 메시지 확인)
 - `cec8208` 탭3에 "미국ETF비교" 체크박스 추가(위 "9." 참고) — 국내 상장 기간 짧은 종목을 추종 미국 ETF×USD/KRW 환율 환산값으로 대체해서 훨씬 긴 기간 백테스트 가능. `US_ETF_DATA`/`USD_KRW_DATA`/`PEN_US_ETF_MAP` 새 상수 추가(파일 크기 약 1MB 증가, `PRESETS`와 분리 관리).
 - `cb23275` 탭3(개인연금 보유전략) 후속 수정 2건(위 "8." 하단 참고) — ①종목 선택 시 비중 자동 균등분배(100/N%), ②리밸런싱 간격을 탭1 k값처럼 최소/최대/step 그리드서치로 변경(`lastPenResult` 단수 → `lastPenResults` 배열, 탭1의 다중조합 비교 UI 패턴을 `pen` 접두어로 복제). 겸사겸사 조합별 거래횟수 항상 0으로 나오던 버그, 기준(보유전략) 선택 시 종목별요약 빈 표로 나오던 버그도 수정.
